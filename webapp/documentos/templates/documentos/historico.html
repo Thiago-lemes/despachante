@@ -1,0 +1,38 @@
+{% extends 'documentos/base.html' %}
+{% block titulo %}Histórico{% endblock %}
+{% block conteudo %}
+<header class="page-heading">
+  <div><p class="eyebrow">Arquivo operacional</p><h1 class="page-title">Histórico</h1><p class="page-subtitle">Documentos enviados e resultados de extração.</p></div>
+  <a class="btn-primary" href="{% url 'enviar' %}">
+    <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+    Novo envio
+  </a>
+</header>
+
+<section class="surface">
+  <form method="get" class="mb-5 flex flex-col gap-3 border-b border-steel pb-5 sm:flex-row">
+    <label class="sr-only" for="filtro-placa">Filtrar por placa</label>
+    <input id="filtro-placa" class="field max-w-xs uppercase" type="text" name="placa" value="{{ placa }}" placeholder="Filtrar por placa">
+    <button class="btn-secondary" type="submit">Filtrar</button>
+    {% if placa %}<a class="btn-secondary" href="{% url 'historico' %}">Limpar</a>{% endif %}
+  </form>
+  {% if documentos %}
+  <div class="table-wrap">
+    <table class="data-table">
+      <thead><tr><th>Data</th><th>Placa</th><th>Proprietário</th><th>Status</th><th><span class="sr-only">Ações</span></th></tr></thead>
+      <tbody>
+      {% for d in documentos %}
+      <tr>
+        <td class="whitespace-nowrap">{{ d.enviado_em|date:'d/m/Y H:i' }}</td>
+        <td>{% if d.placa %}<strong class="font-data">{{ d.placa }}</strong>{% else %}-{% endif %}</td>
+        <td>{{ d.proprietario|default:'-' }}</td>
+        <td>{% if d.status == 'concluido' %}<span class="badge-success">Concluído</span>{% elif d.status == 'erro' %}<span class="badge-error">Erro</span>{% elif d.status == 'processando' %}<span class="badge-working">Processando</span>{% else %}<span class="badge-waiting">Na fila</span>{% endif %}</td>
+        <td><div class="flex justify-end gap-2"><a class="btn-secondary min-h-9 px-3 py-1" href="{% url 'detalhe' d.pk %}">Detalhes</a><a class="icon-button h-9 w-9" href="{% url 'arquivo' d.pk %}" target="_blank" rel="noopener" title="Ver arquivo" aria-label="Ver arquivo"><svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M2.06 12.35a1 1 0 0 1 0-.7C3.6 7.6 7.5 5 12 5c4.5 0 8.4 2.6 9.94 6.65a1 1 0 0 1 0 .7C20.4 16.4 16.5 19 12 19c-4.5 0-8.4-2.6-9.94-6.65Z"/><circle cx="12" cy="12" r="3"/></svg></a></div></td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}<div class="empty-state"><h2 class="section-title">Nenhum documento encontrado</h2><p class="prose-copy mt-2">Envie um PDF para iniciar seu histórico.</p><a class="btn-primary mt-5" href="{% url 'enviar' %}">Enviar arquivo</a></div>{% endif %}
+</section>
+{% endblock %}

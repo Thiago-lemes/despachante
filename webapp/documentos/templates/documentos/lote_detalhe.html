@@ -1,0 +1,32 @@
+{% extends 'documentos/base.html' %}
+{% block titulo %}Lote #{{ lote.pk }}{% endblock %}
+{% block conteudo %}
+<header class="page-heading">
+  <div><p class="eyebrow">Lote #{{ lote.pk }}</p><h1 class="page-title">Acompanhar processamento</h1><p class="page-subtitle">Enviado em {{ lote.criado_em|date:'d/m/Y H:i' }}.</p></div>
+  <a class="btn-secondary" href="{% url 'lotes' %}">Voltar aos lotes</a>
+</header>
+
+<section class="surface" data-progress-url="{% url 'lote_status' lote.pk %}" data-finished="{{ resumo.finalizado|yesno:'true,false' }}" data-snapshot="{{ resumo.aguardando }}:{{ resumo.processando }}:{{ resumo.concluido }}:{{ resumo.erro }}">
+  <div class="stat-row">
+    <div class="stat"><div class="stat-value">{{ resumo.total }}</div><div class="stat-label">Arquivos</div></div>
+    <div class="stat"><div class="stat-value">{{ resumo.aguardando }}</div><div class="stat-label">Na fila</div></div>
+    <div class="stat"><div class="stat-value">{{ resumo.processando }}</div><div class="stat-label">Processando</div></div>
+    <div class="stat"><div class="stat-value">{{ resumo.concluido }}</div><div class="stat-label">Concluídos</div></div>
+    <div class="stat"><div class="stat-value">{{ resumo.erro }}</div><div class="stat-label">Erros</div></div>
+  </div>
+
+  <ol class="process-list">
+    {% for item in lote.itens.all %}
+    <li class="process-item">
+      <span class="process-node {% if item.documento.status == 'concluido' %}is-done{% elif item.documento.status == 'erro' %}is-error{% endif %}">
+        {% if item.documento.status == 'concluido' %}<svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>{% elif item.documento.status == 'erro' %}<svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>{% else %}<span class="h-2 w-2 rounded-full bg-current {% if item.documento.status == 'processando' %}animate-pulse{% endif %}"></span>{% endif %}
+      </span>
+      <div class="min-w-0 sm:flex sm:items-center sm:justify-between sm:gap-4">
+        <div class="min-w-0"><h2 class="truncate text-sm font-bold">{{ item.nome_original }}</h2>{% if item.reutilizado %}<p class="mt-1 text-xs text-slate-500">Resultado reutilizado</p>{% endif %}</div>
+        <div class="mt-2 flex shrink-0 items-center gap-2 sm:mt-0">{% if item.documento.status == 'concluido' %}<span class="badge-success">Concluído</span>{% elif item.documento.status == 'erro' %}<span class="badge-error">Erro</span>{% elif item.documento.status == 'processando' %}<span class="badge-working">Processando</span>{% else %}<span class="badge-waiting">Na fila</span>{% endif %}<a class="btn-secondary min-h-9 px-3 py-1" href="{% url 'detalhe' item.documento.pk %}">Abrir</a></div>
+      </div>
+    </li>
+    {% endfor %}
+  </ol>
+</section>
+{% endblock %}

@@ -1,0 +1,55 @@
+{% extends 'documentos/base.html' %}
+{% block titulo %}{{ documento.processo|default:'Documento' }}{% endblock %}
+{% block conteudo %}
+<header class="page-heading">
+  <div>
+    <p class="eyebrow">Documento #{{ documento.pk }}</p>
+    <h1 class="page-title">{% if documento.processo %}{{ documento.processo }}{% else %}{{ documento.nome_arquivo }}{% endif %}</h1>
+    <p class="page-subtitle">Enviado em {{ documento.enviado_em|date:'d/m/Y H:i' }}</p>
+  </div>
+  <a class="btn-dark" href="{% url 'arquivo' documento.pk %}" target="_blank" rel="noopener">
+    <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M2.06 12.35a1 1 0 0 1 0-.7C3.6 7.6 7.5 5 12 5c4.5 0 8.4 2.6 9.94 6.65a1 1 0 0 1 0 .7C20.4 16.4 16.5 19 12 19c-4.5 0-8.4-2.6-9.94-6.65Z"/><circle cx="12" cy="12" r="3"/></svg>
+    Ver arquivo
+  </a>
+</header>
+
+{% if documento.status == 'aguardando' or documento.status == 'processando' %}
+<section class="surface border-l-4 border-l-gold" data-document-pending="{% url 'documento_status' documento.pk %}" data-document-status="{{ documento.status }}">
+  <div class="flex items-center gap-3">
+    <span class="process-node {% if documento.status == 'processando' %}animate-pulse{% endif %}">
+      <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+    </span>
+    <div><h2 class="section-title">{{ documento.get_status_display }}</h2><p class="prose-copy">A tela será atualizada quando houver progresso.</p></div>
+  </div>
+</section>
+{% else %}
+<section class="surface">
+  <div class="mb-6 flex flex-wrap items-center gap-3 border-b border-steel pb-5">
+    {% if documento.processo %}<span class="plate">Processo: {{ documento.processo }}</span>{% endif %}
+    {% if documento.status == 'concluido' %}
+      {% if documento.placa_valida %}<span class="badge-success">Placa válida</span>{% else %}<span class="badge-error">Conferir placa</span>{% endif %}
+    {% else %}<span class="badge-error">Erro no processamento</span>{% endif %}
+  </div>
+
+  {% if documento.erro %}<div class="alert-error">{{ documento.erro }}</div>{% endif %}
+  {% if duplicata %}
+  <div class="alert-warning">
+    Este veículo já tem um registro anterior, enviado em {{ duplicata.enviado_em|date:'d/m/Y H:i' }}.
+    <a class="font-bold underline" href="{% url 'detalhe' duplicata.pk %}">Abrir registro anterior</a>
+  </div>
+  {% endif %}
+  {% if campos %}<dl class="data-grid">{% for rotulo, valor in campos %}<div class="data-item"><dt class="data-label">{{ rotulo }}</dt><dd class="data-value">{{ valor }}</dd></div>{% endfor %}</dl>{% endif %}
+
+  <div class="mt-6 flex flex-col gap-3 border-t border-steel pt-5 text-sm text-slate-500 sm:flex-row sm:items-center sm:justify-between">
+    <span class="truncate">{{ documento.nome_arquivo }}</span>
+    <form method="post" action="{% url 'reprocessar' documento.pk %}">
+      {% csrf_token %}
+      <button type="submit" class="btn-secondary">
+        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>
+        Reprocessar
+      </button>
+    </form>
+  </div>
+</section>
+{% endif %}
+{% endblock %}

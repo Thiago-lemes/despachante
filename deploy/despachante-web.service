@@ -1,0 +1,17 @@
+[Unit]
+Description=Aplicacao web do Despachante Kingdom Tech
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=rodrigo
+WorkingDirectory=/home/rodrigo/Desenvolvimentos/Clientes/Teixeira/Despachante/webapp
+EnvironmentFile=/etc/kingdom-tech/despachante.env
+ExecStart=/usr/bin/python3 -m gunicorn config.wsgi:application --bind 127.0.0.1:8001 --workers 2 --threads 2 --timeout 120 --access-logfile - --error-logfile -
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

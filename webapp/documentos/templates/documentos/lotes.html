@@ -1,0 +1,17 @@
+{% extends 'documentos/base.html' %}
+{% block titulo %}Lotes{% endblock %}
+{% block conteudo %}
+<header class="page-heading">
+  <div><p class="eyebrow">Processamento em escala</p><h1 class="page-title">Lotes</h1><p class="page-subtitle">Acompanhe os envios em lote.</p></div>
+  <a class="btn-primary" href="{% url 'enviar' %}?modo=lote"><svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Novo lote</a>
+</header>
+<section class="surface">
+  {% if lotes %}
+  <div class="table-wrap"><table class="data-table"><thead><tr><th>Lote</th><th>Data</th><th>Arquivos</th><th>Concluídos</th><th>Status</th><th><span class="sr-only">Ação</span></th></tr></thead><tbody>
+  {% for lote in lotes %}{% with resumo=lote.resumo %}
+  <tr><td><strong>#{{ lote.pk }}</strong></td><td class="whitespace-nowrap">{{ lote.criado_em|date:'d/m/Y H:i' }}</td><td>{{ resumo.total }}</td><td>{{ resumo.concluido }}</td><td>{% if resumo.finalizado %}<span class="badge-success">Finalizado</span>{% elif resumo.processando %}<span class="badge-working">Processando</span>{% else %}<span class="badge-waiting">Na fila</span>{% endif %}</td><td class="text-right"><a class="btn-secondary min-h-9 px-3 py-1" href="{% url 'lote_detalhe' lote.pk %}">Acompanhar</a></td></tr>
+  {% endwith %}{% endfor %}
+  </tbody></table></div>
+  {% else %}<div class="empty-state"><h2 class="section-title">Nenhum lote enviado</h2><p class="prose-copy mt-2">Agrupe até 20 PDFs em um único envio.</p><a class="btn-primary mt-5" href="{% url 'enviar' %}?modo=lote">Criar lote</a></div>{% endif %}
+</section>
+{% endblock %}

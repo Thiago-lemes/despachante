@@ -1,0 +1,17 @@
+[Unit]
+Description=Worker de documentos do Despachante Kingdom Tech
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=rodrigo
+WorkingDirectory=/home/rodrigo/Desenvolvimentos/Clientes/Teixeira/Despachante/webapp
+EnvironmentFile=/etc/kingdom-tech/despachante.env
+ExecStart=/usr/bin/python3 manage.py processar_documentos
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

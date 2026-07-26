@@ -1,0 +1,25 @@
+{% extends 'documentos/base.html' %}
+{% load static %}
+{% block titulo %}Entrar{% endblock %}
+{% block auth_conteudo %}
+<main class="auth-shell">
+  <section class="auth-panel">
+    <div class="auth-card">
+      <div class="mb-8 flex items-center gap-3 lg:hidden"><img class="h-12 w-12 rounded object-cover" src="{% static 'documentos/logo.png' %}" alt="Kingdom Tech"><strong class="font-display">Despachante</strong></div>
+      <p class="eyebrow">Área restrita</p>
+      <h1 class="page-title">Acessar documentos</h1>
+      <p class="prose-copy mt-2">Entre com sua conta Kingdom Tech.</p>
+      {% if form.errors %}<div class="alert-error mt-5">Usuário ou senha incorretos.</div>{% endif %}
+      <form method="post" class="mt-7 space-y-5">
+        {% csrf_token %}
+        <label class="block text-sm font-bold" for="id_username">Usuário<input class="field mt-2" id="id_username" type="text" name="username" autofocus autocapitalize="none" autocomplete="username" required></label>
+        <label class="block text-sm font-bold" for="id_password">Senha<input class="field mt-2" id="id_password" type="password" name="password" autocomplete="current-password" required></label>
+        <input type="hidden" name="next" value="{{ next }}">
+        <button type="submit" class="btn-primary w-full">Entrar</button>
+      </form>
+      <a class="mt-5 block text-center text-sm font-bold text-kingdom hover:text-green-700" href="{% url 'password_reset' %}">Esqueci minha senha</a>
+    </div>
+  </section>
+  <aside class="auth-brand" aria-label="Kingdom Tech"><img class="auth-logo" src="{% static 'documentos/logo.png' %}" alt="Kingdom Tech"></aside>
+</main>
+{% endblock %}

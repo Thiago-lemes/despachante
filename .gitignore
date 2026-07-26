@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+
+# Node
+node_modules/
+
+# Django runtime data (contém dados pessoais reais de clientes/veículos)
+webapp/db.sqlite3
+webapp/media/
+webapp/staticfiles/
+
+# Segredos locais
+.env
+*.env
+!deploy/despachante.env.example
+
+# PDFs de teste (documentos reais com dados pessoais)
+/*.pdf
+
+# Config local do Claude Code
+.claude/settings.local.json
+.claude/scheduled_tasks.lock

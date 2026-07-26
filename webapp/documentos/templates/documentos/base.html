@@ -1,0 +1,77 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>{% block titulo %}Despachante{% endblock %} | Kingdom Tech</title>
+  <link rel="icon" href="{% static 'documentos/logo.png' %}">
+  <link rel="stylesheet" href="{% static 'documentos/app.css' %}">
+</head>
+<body>
+{% if user.is_authenticated %}
+<div class="app-shell">
+  <div data-sidebar-overlay></div>
+  <aside class="sidebar" data-sidebar aria-label="Navegação principal">
+    <div class="sidebar-brand">
+      <img class="sidebar-logo" src="{% static 'documentos/logo.png' %}" alt="Kingdom Tech">
+      <div>
+        <strong class="block font-display text-base">Despachante</strong>
+        <span class="block text-xs text-slate-400">Kingdom Tech</span>
+      </div>
+    </div>
+    <nav class="flex-1 space-y-1 overflow-y-auto py-5">
+      <a class="nav-link {% if request.resolver_match.url_name == 'busca' %}is-active{% endif %}" href="{% url 'busca' %}">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        Buscar placa
+      </a>
+      <a class="nav-link {% if request.resolver_match.url_name == 'enviar' %}is-active{% endif %}" href="{% url 'enviar' %}">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
+        Enviar arquivos
+      </a>
+      <a class="nav-link {% if request.resolver_match.url_name == 'historico' or request.resolver_match.url_name == 'detalhe' %}is-active{% endif %}" href="{% url 'historico' %}" data-pendentes-url="{% url 'pendentes_status' %}">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 3v5h5"/><path d="M3.05 13a9 9 0 1 0 .5-4.5L3 8"/><path d="M12 7v5l4 2"/></svg>
+        Histórico
+        <span class="badge-working ml-auto hidden" data-pendentes-badge></span>
+      </a>
+    </nav>
+    <div class="border-t border-white/10 p-4">
+      <div class="mb-3 flex items-center gap-3 px-2">
+        <span class="flex h-9 w-9 items-center justify-center rounded-full bg-kingdom font-bold text-white">{{ user.username|first|upper }}</span>
+        <div class="min-w-0">
+          <span class="block truncate text-sm font-semibold">{{ user.get_full_name|default:user.username }}</span>
+          <span class="block truncate text-xs text-slate-400">{{ user.email }}</span>
+        </div>
+      </div>
+      <form method="post" action="{% url 'logout' %}">
+        {% csrf_token %}
+        <button type="submit" class="nav-link mx-0 w-full" title="Encerrar sessão">
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/></svg>
+          Sair
+        </button>
+      </form>
+    </div>
+  </aside>
+  <div class="min-w-0">
+    <header class="mobile-bar">
+      <button class="icon-button" type="button" data-sidebar-toggle title="Abrir menu" aria-label="Abrir menu">
+        <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 12h16M4 6h16M4 18h16"/></svg>
+      </button>
+      <span class="font-display font-bold">Despachante</span>
+      <span class="h-10 w-10"></span>
+    </header>
+    <main class="page">
+      {% for m in messages %}
+        <div class="{% if 'success' in m.tags %}alert-success{% elif 'warning' in m.tags %}alert-warning{% elif 'error' in m.tags %}alert-error{% else %}alert-info{% endif %}" role="status">{{ m }}</div>
+      {% endfor %}
+      {% block conteudo %}{% endblock %}
+    </main>
+  </div>
+</div>
+{% else %}
+  {% block auth_conteudo %}{% endblock %}
+{% endif %}
+<script src="{% static 'documentos/app.js' %}" defer></script>
+</body>
+</html>

@@ -1,0 +1,57 @@
+{% extends 'documentos/base.html' %}
+{% block titulo %}Buscar placa{% endblock %}
+{% block conteudo %}
+<header class="page-heading">
+  <div>
+    <p class="eyebrow">Consulta rápida</p>
+    <h1 class="page-title">Buscar veículo</h1>
+    <p class="page-subtitle">Localize os dados extraídos dos seus documentos pela placa.</p>
+  </div>
+</header>
+
+<section class="surface mb-6" aria-labelledby="busca-titulo">
+  <h2 id="busca-titulo" class="section-title mb-4">Placa do veículo</h2>
+  <form method="get" class="flex flex-col gap-3 sm:flex-row sm:items-start">
+    <div class="w-full sm:max-w-xs">
+      {{ form.placa }}
+      {% if form.placa.errors %}<p class="mt-2 text-sm font-semibold text-red-700">{{ form.placa.errors.0 }}</p>{% endif %}
+    </div>
+    <button type="submit" class="btn-primary">
+      <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+      Buscar
+    </button>
+  </form>
+</section>
+
+{% if documento %}
+<section class="surface" aria-labelledby="resultado-titulo">
+  <div class="mb-6 flex flex-col justify-between gap-4 border-b border-steel pb-5 sm:flex-row sm:items-center">
+    <div class="flex flex-wrap items-center gap-3">
+      <span class="plate">{{ documento.placa }}</span>
+      {% if documento.placa_valida %}<span class="badge-success">Placa válida</span>{% endif %}
+      {% if documento.processo %}<span class="plate">Processo: {{ documento.processo }}</span>{% endif %}
+    </div>
+    <a class="btn-dark" href="{% url 'arquivo' documento.pk %}" target="_blank" rel="noopener">
+      <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M2.06 12.35a1 1 0 0 1 0-.7C3.6 7.6 7.5 5 12 5c4.5 0 8.4 2.6 9.94 6.65a1 1 0 0 1 0 .7C20.4 16.4 16.5 19 12 19c-4.5 0-8.4-2.6-9.94-6.65Z"/><circle cx="12" cy="12" r="3"/></svg>
+      Ver arquivo
+    </a>
+  </div>
+  <h2 id="resultado-titulo" class="sr-only">Dados extraídos</h2>
+  <dl class="data-grid">
+    {% for rotulo, valor in campos %}<div class="data-item"><dt class="data-label">{{ rotulo }}</dt><dd class="data-value">{{ valor }}</dd></div>{% endfor %}
+  </dl>
+  <div class="mt-5 flex flex-wrap items-center justify-between gap-3 text-sm text-slate-500">
+    <span>{{ documento.nome_arquivo }} | {{ documento.enviado_em|date:'d/m/Y H:i' }}</span>
+    <a class="font-bold text-kingdom hover:text-green-700" href="{% url 'detalhe' documento.pk %}">Abrir detalhes</a>
+  </div>
+</section>
+{% endif %}
+
+{% if nao_encontrada %}
+<section class="surface border-l-4 border-l-gold" aria-labelledby="nao-encontrada-titulo">
+  <h2 id="nao-encontrada-titulo" class="section-title">Placa {{ placa_buscada }} não encontrada</h2>
+  <p class="prose-copy mt-2">Envie o documento para incluir este veículo no seu histórico.</p>
+  <a class="btn-primary mt-5" href="{% url 'enviar' %}?modo=avulso">Enviar PDF</a>
+</section>
+{% endif %}
+{% endblock %}

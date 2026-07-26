@@ -1,0 +1,10 @@
+{
+  "private": true,
+  "scripts": {
+    "build:css": "tailwindcss -i webapp/documentos/static_src/app.css -o webapp/documentos/static/documentos/app.css --minify",
+    "watch:css": "tailwindcss -i webapp/documentos/static_src/app.css -o webapp/documentos/static/documentos/app.css --watch"
+  },
+  "devDependencies": {
+    "tailwindcss": "3.4.17"
+  }
+}
