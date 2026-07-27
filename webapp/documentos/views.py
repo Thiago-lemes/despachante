@@ -145,6 +145,15 @@ def reprocessar(request, pk):
     return redirect('detalhe', pk=doc.pk)
 
 
+def excluir(request, pk):
+    doc = get_object_or_404(_documentos_do_usuario(request), pk=pk)
+    if request.method == 'POST':
+        doc.delete()
+        messages.success(request, 'Documento excluído.')
+        return redirect('historico')
+    return redirect('detalhe', pk=doc.pk)
+
+
 def arquivo(request, pk):
     doc = get_object_or_404(_documentos_do_usuario(request), pk=pk)
     resposta = FileResponse(doc.arquivo.open('rb'), content_type='application/pdf')

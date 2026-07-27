@@ -14,4 +14,5 @@ urlpatterns = [
     path('doc/<int:pk>/status/', views.documento_status, name='documento_status'),
     path('doc/<int:pk>/arquivo/', views.arquivo, name='arquivo'),
     path('doc/<int:pk>/reprocessar/', views.reprocessar, name='reprocessar'),
+    path('doc/<int:pk>/excluir/', views.excluir, name='excluir'),
 ]

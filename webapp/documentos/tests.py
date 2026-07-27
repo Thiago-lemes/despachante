@@ -94,6 +94,31 @@ class UploadEPermissoesTests(TestCase):
         self.assertContains(resposta, 'não encontrada')
         self.assertNotContains(resposta, 'Ver arquivo')
 
+    def test_dono_exclui_documento_e_arquivo_some_do_disco(self):
+        documento = Documento.objects.create(
+            arquivo=pdf(), enviado_por=self.usuario, status='concluido')
+        storage = documento.arquivo.storage
+        nome_arquivo = documento.arquivo.name
+        self.assertTrue(storage.exists(nome_arquivo))
+        resposta = self.client.post(reverse('excluir', args=[documento.pk]))
+        self.assertRedirects(resposta, reverse('historico'))
+        self.assertFalse(Documento.objects.filter(pk=documento.pk).exists())
+        self.assertFalse(storage.exists(nome_arquivo))
+
+    def test_usuario_nao_exclui_documento_de_terceiro(self):
+        documento = Documento.objects.create(
+            arquivo=pdf(), enviado_por=self.outro, status='concluido')
+        resposta = self.client.post(reverse('excluir', args=[documento.pk]))
+        self.assertEqual(resposta.status_code, 404)
+        self.assertTrue(Documento.objects.filter(pk=documento.pk).exists())
+
+    def test_get_em_excluir_nao_apaga_documento(self):
+        documento = Documento.objects.create(
+            arquivo=pdf(), enviado_por=self.usuario, status='concluido')
+        resposta = self.client.get(reverse('excluir', args=[documento.pk]))
+        self.assertRedirects(resposta, reverse('detalhe', args=[documento.pk]))
+        self.assertTrue(Documento.objects.filter(pk=documento.pk).exists())
+
     def test_formulario_rejeita_falso_pdf(self):
         falso = SimpleUploadedFile('arquivo.pdf', b'nao e pdf')
         formulario = UploadForm(data={'modo': 'avulso'}, files={'arquivos': falso})

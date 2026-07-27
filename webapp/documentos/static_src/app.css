@@ -35,6 +35,7 @@
   .btn-primary { @apply btn bg-kingdom text-white hover:bg-green-700; }
   .btn-secondary { @apply btn border border-steel bg-white text-ink hover:bg-slate-100; }
   .btn-dark { @apply btn bg-ink text-white hover:bg-slate-800; }
+  .btn-danger { @apply btn border border-red-300 bg-white text-red-600 hover:bg-red-50; }
   .badge { @apply inline-flex min-h-6 items-center rounded-full px-2.5 text-xs font-bold; }
   .badge-success { @apply badge bg-green-100 text-green-800; }
   .badge-error { @apply badge bg-red-100 text-red-800; }
