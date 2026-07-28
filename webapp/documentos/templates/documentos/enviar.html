@@ -40,9 +40,9 @@
 
   <div class="mt-6 flex flex-col-reverse gap-3 border-t border-steel pt-5 sm:flex-row sm:items-center sm:justify-end">
     <a class="btn-secondary" href="{% url 'historico' %}">Cancelar</a>
-    <button type="submit" class="btn-primary">
-      <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 2v6m0 0 3-3m-3 3L9 5"/><rect width="18" height="12" x="3" y="10" rx="2"/></svg>
-      Enviar para a fila
+    <button type="submit" class="btn-primary" data-submit-button>
+      <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true" data-submit-icon><path d="M12 2v6m0 0 3-3m-3 3L9 5"/><rect width="18" height="12" x="3" y="10" rx="2"/></svg>
+      <span data-submit-label>Processar</span>
     </button>
   </div>
 </form>

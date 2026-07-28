@@ -2,6 +2,8 @@ import re
 
 from django import forms
 from django.conf import settings
+from django.contrib.auth import get_user_model
+from django.contrib.auth.forms import UserCreationForm
 
 RE_PLACA = re.compile(r'^[A-Z]{3}[0-9][A-Z0-9][0-9]{2}$')
 
@@ -85,3 +87,43 @@ class UploadForm(forms.Form):
         if dados.get('modo') == 'avulso' and len(arquivos) != 1:
             self.add_error('arquivos', 'O envio avulso aceita exatamente um PDF.')
         return dados
+
+
+class CadastroForm(UserCreationForm):
+    email = forms.EmailField(
+        label='E-mail', required=True,
+        widget=forms.EmailInput(attrs={'class': 'field', 'autocomplete': 'email'}))
+
+    class Meta:
+        model = get_user_model()
+        fields = ['username', 'email']
+        widgets = {
+            'username': forms.TextInput(attrs={'class': 'field', 'autocomplete': 'username'}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        for campo in ('password1', 'password2'):
+            self.fields[campo].widget.attrs.update({'class': 'field'})
+
+    def clean_email(self):
+        email = self.cleaned_data['email']
+        if get_user_model().objects.filter(email__iexact=email).exists():
+            raise forms.ValidationError('Já existe uma conta com este e-mail.')
+        return email
+
+
+class PerfilForm(forms.ModelForm):
+    class Meta:
+        model = get_user_model()
+        fields = ['first_name', 'last_name', 'email']
+        labels = {
+            'first_name': 'Nome',
+            'last_name': 'Sobrenome',
+            'email': 'E-mail',
+        }
+        widgets = {
+            'first_name': forms.TextInput(attrs={'class': 'field'}),
+            'last_name': forms.TextInput(attrs={'class': 'field'}),
+            'email': forms.EmailInput(attrs={'class': 'field'}),
+        }

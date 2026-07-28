@@ -27,8 +27,6 @@
 <section class="surface" aria-labelledby="resultado-titulo">
   <div class="mb-6 flex flex-col justify-between gap-4 border-b border-steel pb-5 sm:flex-row sm:items-center">
     <div class="flex flex-wrap items-center gap-3">
-      <span class="plate">{{ documento.placa }}</span>
-      {% if documento.placa_valida %}<span class="badge-success">Placa válida</span>{% endif %}
       {% if documento.processo %}<span class="plate">Processo: {{ documento.processo }}</span>{% endif %}
     </div>
     <a class="btn-dark" href="{% url 'arquivo' documento.pk %}" target="_blank" rel="noopener">

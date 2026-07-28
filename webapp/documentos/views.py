@@ -1,12 +1,14 @@
 import hashlib
 
 from django.contrib import messages
+from django.contrib.auth import login
+from django.contrib.auth.decorators import login_not_required
 from django.http import FileResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.utils.http import content_disposition_header
 
-from .forms import BuscaPlacaForm, UploadForm, normaliza_placa
+from .forms import BuscaPlacaForm, CadastroForm, PerfilForm, UploadForm, normaliza_placa
 from .models import Documento, ItemLote, Lote
 from .services import campos_para_exibir
 
@@ -99,6 +101,34 @@ def enviar(request):
     return render(request, 'documentos/enviar.html', {'form': form})
 
 
+@login_not_required
+def cadastro(request):
+    if request.user.is_authenticated:
+        return redirect('busca')
+    if request.method == 'POST':
+        form = CadastroForm(request.POST)
+        if form.is_valid():
+            usuario = form.save()
+            login(request, usuario)
+            messages.success(request, 'Conta criada com sucesso.')
+            return redirect('busca')
+    else:
+        form = CadastroForm()
+    return render(request, 'registration/cadastro.html', {'form': form})
+
+
+def conta(request):
+    if request.method == 'POST':
+        form = PerfilForm(request.POST, instance=request.user)
+        if form.is_valid():
+            form.save()
+            messages.success(request, 'Dados atualizados.')
+            return redirect('conta')
+    else:
+        form = PerfilForm(instance=request.user)
+    return render(request, 'documentos/conta.html', {'form': form})
+
+
 def pendentes_status(request):
     total = _documentos_do_usuario(request).filter(
         status__in=['aguardando', 'processando']).count()
@@ -106,13 +136,35 @@ def pendentes_status(request):
 
 
 def historico(request):
-    docs = _documentos_do_usuario(request)
+    docs = _documentos_do_usuario(request).filter(status__in=['concluido', 'erro'])
     placa = normaliza_placa(request.GET.get('placa', ''))
     if placa:
         docs = docs.filter(placa__startswith=placa)
     return render(request, 'documentos/historico.html', {
         'documentos': docs[:200], 'placa': placa,
     })
+
+
+def em_processamento(request):
+    docs = list(_documentos_do_usuario(request).filter(
+        status__in=['aguardando', 'processando']).order_by('enviado_em'))
+    aguardando = sum(1 for d in docs if d.status == 'aguardando')
+    processando = len(docs) - aguardando
+    resumo = {'aguardando': aguardando, 'processando': processando, 'total': len(docs)}
+    return render(request, 'documentos/em_processamento.html', {
+        'documentos': docs, 'resumo': resumo,
+    })
+
+
+def em_processamento_status(request):
+    docs = _documentos_do_usuario(request).filter(status__in=['aguardando', 'processando'])
+    resumo = {
+        'aguardando': docs.filter(status='aguardando').count(),
+        'processando': docs.filter(status='processando').count(),
+        'concluido': 0,
+        'erro': 0,
+    }
+    return JsonResponse({'resumo': resumo})
 
 
 def detalhe(request, pk):

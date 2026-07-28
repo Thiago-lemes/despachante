@@ -5,7 +5,11 @@ from . import views
 urlpatterns = [
     path('', views.busca, name='busca'),
     path('enviar/', views.enviar, name='enviar'),
+    path('conta/', views.conta, name='conta'),
+    path('cadastro/', views.cadastro, name='cadastro'),
     path('historico/', views.historico, name='historico'),
+    path('em-processamento/', views.em_processamento, name='em_processamento'),
+    path('em-processamento/status/', views.em_processamento_status, name='em_processamento_status'),
     path('pendentes/', views.pendentes_status, name='pendentes_status'),
     path('lotes/', views.lotes, name='lotes'),
     path('lotes/<int:pk>/', views.lote_detalhe, name='lote_detalhe'),

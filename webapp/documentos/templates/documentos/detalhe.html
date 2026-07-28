@@ -26,9 +26,7 @@
 <section class="surface">
   <div class="mb-6 flex flex-wrap items-center gap-3 border-b border-steel pb-5">
     {% if documento.processo %}<span class="plate">Processo: {{ documento.processo }}</span>{% endif %}
-    {% if documento.status == 'concluido' %}
-      {% if documento.placa_valida %}<span class="badge-success">Placa válida</span>{% else %}<span class="badge-error">Conferir placa</span>{% endif %}
-    {% else %}<span class="badge-error">Erro no processamento</span>{% endif %}
+    {% if documento.status == 'erro' %}<span class="badge-error">Erro no processamento</span>{% endif %}
   </div>
 
   {% if documento.erro %}<div class="alert-error">{{ documento.erro }}</div>{% endif %}
@@ -50,7 +48,7 @@
           Reprocessar
         </button>
       </form>
-      <form method="post" action="{% url 'excluir' documento.pk %}" onsubmit="return confirm('Excluir este documento e o PDF associado? Esta ação não pode ser desfeita.')">
+      <form method="post" action="{% url 'excluir' documento.pk %}" data-confirm-delete data-confirm-message="Excluir este documento e o PDF associado? Esta ação não pode ser desfeita.">
         {% csrf_token %}
         <button type="submit" class="btn-danger">
           <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6h16Z"/></svg>

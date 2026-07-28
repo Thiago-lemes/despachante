@@ -76,9 +76,16 @@
   .process-node.is-error { @apply border-red-400 bg-red-50 text-red-700; }
   .auth-shell { @apply grid min-h-screen bg-ink lg:grid-cols-[minmax(360px,480px)_1fr]; }
   .auth-panel { @apply flex min-h-screen items-center bg-white px-6 py-10 sm:px-12; }
-  .auth-brand { @apply hidden min-h-screen items-center justify-center overflow-hidden bg-ink p-12 lg:flex; }
-  .auth-logo { @apply h-auto w-full max-w-sm rounded-md object-contain; }
+  .auth-brand { @apply relative hidden min-h-screen items-center justify-center overflow-hidden bg-ink p-12 lg:flex; }
+  .auth-brand::before {
+    content: '';
+    @apply absolute inset-0 bg-cover bg-center opacity-20;
+    background-image: url('/static/documentos/fundo.jpg');
+  }
+  .auth-logo { @apply relative h-auto w-full max-w-sm rounded-md object-contain; }
   .auth-card { @apply mx-auto w-full max-w-sm; }
+  .confirm-dialog { @apply w-full max-w-sm rounded-md border border-steel bg-white p-0 shadow-panel; }
+  .confirm-dialog::backdrop { @apply bg-ink/60; }
   .prose-copy { @apply text-sm leading-6 text-slate-600; }
 }
 

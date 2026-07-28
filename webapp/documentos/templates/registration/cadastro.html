@@ -1,0 +1,38 @@
+{% extends 'documentos/base.html' %}
+{% load static %}
+{% block titulo %}Criar conta{% endblock %}
+{% block auth_conteudo %}
+<main class="auth-shell">
+  <section class="auth-panel">
+    <div class="auth-card">
+      <div class="mb-8 flex items-center gap-3 lg:hidden"><img class="h-12 w-12 rounded object-cover" src="{% static 'documentos/logo.png' %}" alt="Kingdom Tech"><strong class="font-display">Despachante</strong></div>
+      <p class="eyebrow">Nova conta</p>
+      <h1 class="page-title">Criar conta</h1>
+      <p class="prose-copy mt-2">Cadastre-se para enviar e acompanhar documentos.</p>
+      {% if form.non_field_errors %}<div class="alert-error mt-5">{{ form.non_field_errors.0 }}</div>{% endif %}
+      <form method="post" class="mt-7 space-y-5">
+        {% csrf_token %}
+        <label class="block text-sm font-bold" for="{{ form.username.id_for_label }}">Usuário
+          {{ form.username }}
+          {% if form.username.errors %}<p class="mt-2 text-sm font-semibold text-red-700">{{ form.username.errors.0 }}</p>{% endif %}
+        </label>
+        <label class="block text-sm font-bold" for="{{ form.email.id_for_label }}">E-mail
+          {{ form.email }}
+          {% if form.email.errors %}<p class="mt-2 text-sm font-semibold text-red-700">{{ form.email.errors.0 }}</p>{% endif %}
+        </label>
+        <label class="block text-sm font-bold" for="{{ form.password1.id_for_label }}">Senha
+          {{ form.password1 }}
+          {% if form.password1.errors %}<p class="mt-2 text-sm font-semibold text-red-700">{{ form.password1.errors.0 }}</p>{% endif %}
+        </label>
+        <label class="block text-sm font-bold" for="{{ form.password2.id_for_label }}">Confirmar senha
+          {{ form.password2 }}
+          {% if form.password2.errors %}<p class="mt-2 text-sm font-semibold text-red-700">{{ form.password2.errors.0 }}</p>{% endif %}
+        </label>
+        <button type="submit" class="btn-primary w-full">Criar conta</button>
+      </form>
+      <a class="mt-5 block text-center text-sm font-bold text-kingdom hover:text-green-700" href="{% url 'login' %}">Já tenho conta</a>
+    </div>
+  </section>
+  <aside class="auth-brand" aria-label="Kingdom Tech"><img class="auth-logo" src="{% static 'documentos/logo.png' %}" alt="Kingdom Tech"></aside>
+</main>
+{% endblock %}

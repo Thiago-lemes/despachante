@@ -1,0 +1,35 @@
+{% extends 'documentos/base.html' %}
+{% block titulo %}Minha conta{% endblock %}
+{% block conteudo %}
+<header class="page-heading">
+  <div>
+    <p class="eyebrow">Minha conta</p>
+    <h1 class="page-title">Meus dados</h1>
+    <p class="page-subtitle">Atualize seu nome e e-mail de contato.</p>
+  </div>
+</header>
+
+<form method="post" class="surface max-w-xl space-y-5">
+  {% csrf_token %}
+  <label class="block text-sm font-bold" for="id_username">Usuário
+    <input class="field mt-2" id="id_username" type="text" value="{{ user.username }}" disabled>
+  </label>
+  <label class="block text-sm font-bold" for="{{ form.first_name.id_for_label }}">{{ form.first_name.label }}
+    {{ form.first_name }}
+    {% if form.first_name.errors %}<p class="mt-2 text-sm font-semibold text-red-700">{{ form.first_name.errors.0 }}</p>{% endif %}
+  </label>
+  <label class="block text-sm font-bold" for="{{ form.last_name.id_for_label }}">{{ form.last_name.label }}
+    {{ form.last_name }}
+    {% if form.last_name.errors %}<p class="mt-2 text-sm font-semibold text-red-700">{{ form.last_name.errors.0 }}</p>{% endif %}
+  </label>
+  <label class="block text-sm font-bold" for="{{ form.email.id_for_label }}">{{ form.email.label }}
+    {{ form.email }}
+    {% if form.email.errors %}<p class="mt-2 text-sm font-semibold text-red-700">{{ form.email.errors.0 }}</p>{% endif %}
+  </label>
+
+  <div class="flex flex-col-reverse gap-3 border-t border-steel pt-5 sm:flex-row sm:items-center sm:justify-between">
+    <a class="text-sm font-bold text-kingdom hover:text-green-700" href="{% url 'password_change' %}">Alterar senha</a>
+    <button type="submit" class="btn-primary">Salvar</button>
+  </div>
+</form>
+{% endblock %}

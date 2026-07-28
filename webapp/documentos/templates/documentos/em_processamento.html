@@ -1,0 +1,47 @@
+{% extends 'documentos/base.html' %}
+{% block titulo %}Em processamento{% endblock %}
+{% block conteudo %}
+<header class="page-heading">
+  <div>
+    <p class="eyebrow">Fila em andamento</p>
+    <h1 class="page-title">Em processamento</h1>
+    <p class="page-subtitle">Documentos aguardando ou sendo processados agora.</p>
+  </div>
+  <a class="btn-primary" href="{% url 'enviar' %}">
+    <svg class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+    Novo envio
+  </a>
+</header>
+
+<section class="surface" data-progress-url="{% url 'em_processamento_status' %}" data-finished="false" data-snapshot="{{ resumo.aguardando }}:{{ resumo.processando }}:0:0">
+  <div class="stat-row">
+    <div class="stat"><div class="stat-value">{{ resumo.total }}</div><div class="stat-label">Total</div></div>
+    <div class="stat"><div class="stat-value">{{ resumo.aguardando }}</div><div class="stat-label">Na fila</div></div>
+    <div class="stat"><div class="stat-value">{{ resumo.processando }}</div><div class="stat-label">Processando</div></div>
+  </div>
+
+  {% if documentos %}
+  <ol class="process-list mt-6">
+    {% for documento in documentos %}
+    <li class="process-item">
+      <span class="process-node {% if documento.status == 'processando' %}animate-pulse{% endif %}">
+        <span class="h-2 w-2 rounded-full bg-current"></span>
+      </span>
+      <div class="min-w-0 sm:flex sm:items-center sm:justify-between sm:gap-4">
+        <div class="min-w-0"><h2 class="truncate text-sm font-bold">{{ documento.nome_arquivo }}</h2></div>
+        <div class="mt-2 flex shrink-0 items-center gap-2 sm:mt-0">
+          {% if documento.status == 'processando' %}<span class="badge-working">Processando</span>{% else %}<span class="badge-waiting">Na fila</span>{% endif %}
+          <a class="btn-secondary min-h-9 px-3 py-1" href="{% url 'detalhe' documento.pk %}">Abrir</a>
+        </div>
+      </div>
+    </li>
+    {% endfor %}
+  </ol>
+  {% else %}
+  <div class="empty-state mt-6">
+    <h2 class="section-title">Nada em processamento</h2>
+    <p class="prose-copy mt-2">Não há itens em processamento no momento.</p>
+  </div>
+  {% endif %}
+</section>
+{% endblock %}

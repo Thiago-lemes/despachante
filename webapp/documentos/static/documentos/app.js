@@ -73,6 +73,37 @@
   }));
   document.querySelector('input[name="modo"]:checked')?.dispatchEvent(new Event('change'));
 
+  const uploadForm = document.querySelector('[data-upload-form]');
+  uploadForm?.addEventListener('submit', () => {
+    const botao = uploadForm.querySelector('[data-submit-button]');
+    if (!botao || botao.disabled) return;
+    botao.disabled = true;
+    botao.querySelector('[data-submit-icon]')?.classList.add('animate-spin');
+    const rotulo = botao.querySelector('[data-submit-label]');
+    if (rotulo) rotulo.textContent = 'Processando...';
+  });
+
+  const confirmDialog = document.querySelector('[data-confirm-dialog]');
+  if (confirmDialog) {
+    const mensagemEl = confirmDialog.querySelector('[data-confirm-message]');
+    const aceitarBtn = confirmDialog.querySelector('[data-confirm-accept]');
+    let pendingForm = null;
+    document.addEventListener('submit', (event) => {
+      const form = event.target.closest('[data-confirm-delete]');
+      if (!form) return;
+      event.preventDefault();
+      pendingForm = form;
+      if (mensagemEl) mensagemEl.textContent = form.dataset.confirmMessage || 'Esta ação não pode ser desfeita.';
+      confirmDialog.showModal();
+    });
+    aceitarBtn?.addEventListener('click', () => {
+      confirmDialog.close();
+      pendingForm?.submit();
+      pendingForm = null;
+    });
+    confirmDialog.addEventListener('close', () => { pendingForm = null; });
+  }
+
   const progress = document.querySelector('[data-progress-url]');
   if (progress && progress.dataset.finished !== 'true') {
     let previous = progress.dataset.snapshot;

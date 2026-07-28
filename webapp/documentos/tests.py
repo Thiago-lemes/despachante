@@ -127,6 +127,44 @@ class UploadEPermissoesTests(TestCase):
 
 
 @override_settings(MEDIA_ROOT=TEST_MEDIA_ROOT, STORAGES=TEST_STORAGES)
+class ListagensTests(TestCase):
+    def setUp(self):
+        User = get_user_model()
+        self.usuario = User.objects.create_user('carlos', 'carlos@example.com', 'senha-segura')
+        self.outro = User.objects.create_user('debora', 'debora@example.com', 'senha-segura')
+        self.client.force_login(self.usuario)
+
+    def test_historico_mostra_apenas_concluido_e_erro(self):
+        Documento.objects.create(arquivo=pdf(), enviado_por=self.usuario, status='concluido')
+        Documento.objects.create(arquivo=pdf(), enviado_por=self.usuario, status='erro')
+        Documento.objects.create(arquivo=pdf(), enviado_por=self.usuario, status='aguardando')
+        Documento.objects.create(arquivo=pdf(), enviado_por=self.usuario, status='processando')
+        resposta = self.client.get(reverse('historico'))
+        self.assertEqual(len(resposta.context['documentos']), 2)
+        for documento in resposta.context['documentos']:
+            self.assertIn(documento.status, ('concluido', 'erro'))
+
+    def test_em_processamento_mostra_apenas_fila_e_processando(self):
+        Documento.objects.create(arquivo=pdf(), enviado_por=self.usuario, status='concluido')
+        Documento.objects.create(arquivo=pdf(), enviado_por=self.usuario, status='aguardando')
+        Documento.objects.create(arquivo=pdf(), enviado_por=self.usuario, status='processando')
+        Documento.objects.create(arquivo=pdf(), enviado_por=self.outro, status='aguardando')
+        resposta = self.client.get(reverse('em_processamento'))
+        self.assertEqual(len(resposta.context['documentos']), 2)
+        self.assertEqual(resposta.context['resumo']['total'], 2)
+
+    def test_em_processamento_vazio_mostra_cards_zerados(self):
+        resposta = self.client.get(reverse('em_processamento'))
+        self.assertEqual(resposta.context['resumo'], {'aguardando': 0, 'processando': 0, 'total': 0})
+        self.assertContains(resposta, 'Não há itens em processamento')
+
+    def test_em_processamento_status_json(self):
+        Documento.objects.create(arquivo=pdf(), enviado_por=self.usuario, status='aguardando')
+        resposta = self.client.get(reverse('em_processamento_status'))
+        self.assertEqual(resposta.json()['resumo']['aguardando'], 1)
+
+
+@override_settings(MEDIA_ROOT=TEST_MEDIA_ROOT, STORAGES=TEST_STORAGES)
 class PipelineTests(TestCase):
     def setUp(self):
         usuario = get_user_model().objects.create_user('operador')
@@ -170,6 +208,60 @@ class PipelineTests(TestCase):
         self.documento.refresh_from_db()
         self.assertEqual(self.documento.status, 'concluido')
         self.assertEqual(self.documento.tentativas, 1)
+
+
+class CadastroTests(TestCase):
+    def test_cria_conta_e_loga_automaticamente(self):
+        resposta = self.client.post(reverse('cadastro'), {
+            'username': 'diego', 'email': 'diego@example.com',
+            'password1': 'uma-senha-bem-forte-123', 'password2': 'uma-senha-bem-forte-123',
+        })
+        self.assertRedirects(resposta, reverse('busca'))
+        usuario = get_user_model().objects.get(username='diego')
+        self.assertEqual(usuario.email, 'diego@example.com')
+        resposta = self.client.get(reverse('historico'))
+        self.assertEqual(resposta.status_code, 200)
+
+    def test_email_duplicado_e_rejeitado(self):
+        get_user_model().objects.create_user('existente', 'usado@example.com', 'senha-antiga')
+        resposta = self.client.post(reverse('cadastro'), {
+            'username': 'novo', 'email': 'usado@example.com',
+            'password1': 'uma-senha-bem-forte-123', 'password2': 'uma-senha-bem-forte-123',
+        })
+        self.assertEqual(resposta.status_code, 200)
+        self.assertFalse(get_user_model().objects.filter(username='novo').exists())
+
+    def test_pagina_de_cadastro_acessivel_sem_login(self):
+        resposta = self.client.get(reverse('cadastro'))
+        self.assertEqual(resposta.status_code, 200)
+
+
+class ContaTests(TestCase):
+    def setUp(self):
+        self.usuario = get_user_model().objects.create_user(
+            'carla', 'carla@example.com', 'senha-antiga')
+        self.client.force_login(self.usuario)
+
+    def test_atualiza_nome_e_email(self):
+        resposta = self.client.post(reverse('conta'), {
+            'first_name': 'Carla', 'last_name': 'Souza', 'email': 'nova@example.com',
+        })
+        self.assertRedirects(resposta, reverse('conta'))
+        self.usuario.refresh_from_db()
+        self.assertEqual(self.usuario.first_name, 'Carla')
+        self.assertEqual(self.usuario.email, 'nova@example.com')
+
+    def test_email_invalido_nao_salva(self):
+        resposta = self.client.post(reverse('conta'), {
+            'first_name': '', 'last_name': '', 'email': 'nao-e-um-email',
+        })
+        self.assertEqual(resposta.status_code, 200)
+        self.usuario.refresh_from_db()
+        self.assertEqual(self.usuario.email, 'carla@example.com')
+
+    def test_pagina_de_troca_de_senha_carrega(self):
+        resposta = self.client.get(reverse('password_change'))
+        self.assertEqual(resposta.status_code, 200)
 
 
 @override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
