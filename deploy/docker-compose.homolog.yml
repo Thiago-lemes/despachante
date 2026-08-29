@@ -1,0 +1,36 @@
+version: '3.8'
+
+# Homologação: WAHA + n8n para testes das fases 5–7.
+# Uso: docker compose -f deploy/docker-compose.homolog.yml up -d
+
+services:
+  waha:
+    image: devlikeapro/waha:latest
+    ports:
+      - '3000:3000'
+    environment:
+      WHATSAPP_HOOK_URL: http://host.docker.internal:8000/api/v1/integracao/webhooks/waha/piloto/
+      WHATSAPP_HOOK_EVENTS: message
+      WAHA_API_KEY: ${WAHA_API_KEY:-chave-homolog-local}
+    volumes:
+      - waha_data:/app/.sessions
+    restart: unless-stopped
+
+  n8n:
+    image: n8nio/n8n:latest
+    ports:
+      - '5678:5678'
+    environment:
+      N8N_HOST: localhost
+      N8N_PORT: 5678
+      N8N_PROTOCOL: http
+      WEBHOOK_URL: http://localhost:5678/
+      GENERIC_TIMEZONE: America/Sao_Paulo
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ../n8n/workflows:/import/workflows:ro
+    restart: unless-stopped
+
+volumes:
+  waha_data:
+  n8n_data:

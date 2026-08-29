@@ -35,6 +35,7 @@ CSRF_COOKIE_SECURE = not DEBUG
 # Application definition
 
 INSTALLED_APPS = [
+    'empresas',
     'documentos',
     'django.contrib.admin',
     'django.contrib.auth',
@@ -43,6 +44,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'atendimento',
+    'integracao',
 ]
 
 MIDDLEWARE = [
@@ -52,6 +54,7 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'empresas.middleware.EmpresaAtualMiddleware',
     'django.contrib.auth.middleware.LoginRequiredMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
@@ -193,6 +196,13 @@ OPENAI_MODEL = os.environ.get('OPENAI_MODEL', 'gpt-4o-mini')
 UPLOAD_MAX_FILES = 20
 UPLOAD_MAX_FILE_SIZE = 30 * 1024 * 1024
 UPLOAD_MAX_TOTAL_SIZE = 200 * 1024 * 1024
+
+# Integração (fases 4–8): API interna, WAHA e webhooks
+INTEGRACAO_API_TOKEN = os.environ.get('INTEGRACAO_API_TOKEN', '')
+WAHA_BASE_URL = os.environ.get('WAHA_BASE_URL', 'http://localhost:3000')
+WAHA_API_KEY = os.environ.get('WAHA_API_KEY', '')
+WAHA_WEBHOOK_SECRET = os.environ.get('WAHA_WEBHOOK_SECRET', '')
+WAHA_WEBHOOK_VERIFICAR_ASSINATURA = _env_bool('WAHA_WEBHOOK_VERIFICAR_ASSINATURA', False)
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field

@@ -1,0 +1,115 @@
+{
+  "name": "Despachante - Mensagem recebida (WAHA → Django)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "waha-inbound",
+        "responseMode": "lastNode"
+      },
+      "name": "Webhook WAHA",
+      "type": "n8n-nodes-base.webhook",
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.DJANGO_BASE_URL}}/api/v1/integracao/mensagens/",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "Authorization", "value": "=Bearer {{$env.INTEGRACAO_API_TOKEN}}"},
+            {"name": "X-Empresa-Id", "value": "={{$env.EMPRESA_ID}}"}
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {"name": "wa_id", "value": "={{$json.payload.from.replace('@c.us','')}}"},
+            {"name": "conteudo", "value": "={{$json.payload.body}}"},
+            {"name": "wa_message_id", "value": "={{$json.payload.id}}"}
+          ]
+        }
+      },
+      "name": "Registrar no Django",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{$json.conteudo}}",
+              "operation": "contains",
+              "value2": "licen"
+            }
+          ]
+        }
+      },
+      "name": "Triagem simples",
+      "type": "n8n-nodes-base.if",
+      "position": [720, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.DJANGO_BASE_URL}}/api/v1/integracao/mensagens/enviar/",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "Authorization", "value": "=Bearer {{$env.INTEGRACAO_API_TOKEN}}"},
+            {"name": "X-Empresa-Id", "value": "={{$env.EMPRESA_ID}}"}
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {"name": "conversa_id", "value": "={{$node['Registrar no Django'].json.conversa_id}}"},
+            {"name": "texto", "value": "Identifiquei licenciamento. Envie o CRLV em PDF."},
+            {"name": "sessao", "value": "piloto"}
+          ]
+        }
+      },
+      "name": "Responder cliente",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [960, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.DJANGO_BASE_URL}}/api/v1/integracao/conversas/{{$node['Registrar no Django'].json.conversa_id}}/tarefas/",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {"name": "Authorization", "value": "=Bearer {{$env.INTEGRACAO_API_TOKEN}}"},
+            {"name": "X-Empresa-Id", "value": "={{$env.EMPRESA_ID}}"}
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {"name": "resumo_triagem", "value": "Triagem automática via n8n"}
+          ]
+        }
+      },
+      "name": "Criar card Kanban",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [960, 400]
+    }
+  ],
+  "connections": {
+    "Webhook WAHA": {"main": [[{"node": "Registrar no Django", "type": "main", "index": 0}]]},
+    "Registrar no Django": {"main": [[{"node": "Triagem simples", "type": "main", "index": 0}]]},
+    "Triagem simples": {
+      "main": [
+        [{"node": "Responder cliente", "type": "main", "index": 0}],
+        []
+      ]
+    },
+    "Responder cliente": {"main": [[{"node": "Criar card Kanban", "type": "main", "index": 0}]]}
+  },
+  "meta": {
+    "description": "Fluxo piloto: mensagem → triagem → resposta → Kanban. Importar no n8n e configurar DJANGO_BASE_URL, INTEGRACAO_API_TOKEN e EMPRESA_ID."
+  }
+}

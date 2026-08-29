@@ -1,5 +1,6 @@
 from django.contrib import admin
 
+from empresas.admin_utils import EmpresaAdminMixin
 from .models import Documento, ItemLote, Lote
 
 
@@ -10,16 +11,16 @@ class ItemLoteInline(admin.TabularInline):
 
 
 @admin.register(Lote)
-class LoteAdmin(admin.ModelAdmin):
-    list_display = ('id', 'modo', 'criado_em', 'enviado_por')
+class LoteAdmin(EmpresaAdminMixin, admin.ModelAdmin):
+    list_display = ('id', 'empresa', 'modo', 'criado_em', 'enviado_por')
     list_filter = ('modo', 'criado_em')
     inlines = (ItemLoteInline,)
 
 
 @admin.register(Documento)
-class DocumentoAdmin(admin.ModelAdmin):
+class DocumentoAdmin(EmpresaAdminMixin, admin.ModelAdmin):
     list_display = (
-        'placa', 'processo', 'pipeline', 'provedor_utilizado', 'status',
+        'empresa', 'placa', 'processo', 'pipeline', 'provedor_utilizado', 'status',
         'enviado_em', 'enviado_por',
     )
     list_filter = ('status', 'pipeline', 'provedor_utilizado', 'placa_valida')

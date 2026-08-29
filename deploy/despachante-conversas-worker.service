@@ -1,0 +1,17 @@
+[Unit]
+Description=Despachante worker de conversas (triagem e análise)
+After=network.target despachante-web.service
+Wants=despachante-web.service
+
+[Service]
+Type=simple
+User=despachante
+Group=despachante
+WorkingDirectory=/opt/despachante/webapp
+EnvironmentFile=/etc/despachante/despachante.env
+ExecStart=/opt/despachante/webapp/venv/bin/python manage.py processar_conversas
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

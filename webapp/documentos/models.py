@@ -9,6 +9,8 @@ class Lote(models.Model):
     ]
 
     modo = models.CharField(max_length=8, choices=MODOS)
+    empresa = models.ForeignKey(
+        'empresas.Empresa', on_delete=models.PROTECT, related_name='lotes_documentos')
     criado_em = models.DateTimeField(auto_now_add=True)
     enviado_por = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -21,6 +23,14 @@ class Lote(models.Model):
 
     def __str__(self):
         return f'Lote {self.pk} - {self.get_modo_display()}'
+
+    def save(self, *args, **kwargs):
+        if not self.empresa_id and self.enviado_por_id:
+            from empresas.models import EmpresaUsuario
+            self.empresa_id = EmpresaUsuario.objects.filter(
+                usuario_id=self.enviado_por_id, ativo=True, empresa__ativa=True,
+            ).order_by('empresa__nome').values_list('empresa_id', flat=True).first()
+        super().save(*args, **kwargs)
 
     def resumo(self):
         contagens = {chave: 0 for chave, _ in Documento.STATUS}
@@ -55,6 +65,8 @@ class Documento(models.Model):
     ]
 
     arquivo = models.FileField('PDF', upload_to='uploads/%Y/%m/')
+    empresa = models.ForeignKey(
+        'empresas.Empresa', on_delete=models.PROTECT, related_name='documentos')
     hash_sha256 = models.CharField(max_length=64, blank=True, db_index=True)
     enviado_em = models.DateTimeField('enviado em', auto_now_add=True)
     enviado_por = models.ForeignKey(
@@ -84,12 +96,20 @@ class Documento(models.Model):
         ordering = ['-enviado_em']
         verbose_name = 'documento'
         indexes = [models.Index(
-            fields=['enviado_por', 'hash_sha256', 'pipeline'],
-            name='documentos_enviado_1780e0_idx',
+            fields=['empresa', 'hash_sha256', 'pipeline'],
+            name='documentos_empresa_hash_idx',
         )]
 
     def __str__(self):
         return f'{self.placa or "sem placa"} - {self.nome_arquivo}'
+
+    def save(self, *args, **kwargs):
+        if not self.empresa_id and self.enviado_por_id:
+            from empresas.models import EmpresaUsuario
+            self.empresa_id = EmpresaUsuario.objects.filter(
+                usuario_id=self.enviado_por_id, ativo=True, empresa__ativa=True,
+            ).order_by('empresa__nome').values_list('empresa_id', flat=True).first()
+        super().save(*args, **kwargs)
 
     @property
     def nome_arquivo(self):

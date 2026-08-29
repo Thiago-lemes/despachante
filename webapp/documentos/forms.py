@@ -41,7 +41,12 @@ class MultipleFileField(forms.FileField):
 
     def clean(self, data, initial=None):
         arquivos = data if isinstance(data, (list, tuple)) else [data]
-        return [super().clean(arquivo, initial) for arquivo in arquivos]
+        # ``super()`` sem argumentos perde o contexto de classe dentro de uma
+        # comprehension no Python. Guarde o métod antes de iterar para que
+        # uploads individuais e múltiplos passem pela validação padrão do
+        # Django da mesma forma.
+        limpar_arquivo = super().clean
+        return [limpar_arquivo(arquivo, initial) for arquivo in arquivos]
 
 
 class UploadForm(forms.Form):

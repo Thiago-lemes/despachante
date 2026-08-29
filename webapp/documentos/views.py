@@ -4,6 +4,7 @@ from django.contrib import messages
 from django.contrib.auth import login
 from django.contrib.auth.decorators import login_not_required
 from django.http import FileResponse, JsonResponse
+from django.core.exceptions import PermissionDenied
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.utils.http import content_disposition_header
@@ -13,8 +14,14 @@ from .models import Documento, ItemLote, Lote
 from .services import campos_para_exibir
 
 
-def _documentos_do_usuario(request):
-    return Documento.objects.filter(enviado_por=request.user)
+def _empresa_atual(request):
+    if not request.empresa:
+        raise PermissionDenied('Nenhuma empresa ativa está vinculada a este usuário.')
+    return request.empresa
+
+
+def _documentos_da_empresa(request):
+    return Documento.objects.filter(empresa=_empresa_atual(request))
 
 
 def _hash_arquivo(arquivo):
@@ -30,7 +37,7 @@ def busca(request):
     contexto = {'form': form}
     if form.is_valid():
         placa = form.cleaned_data['placa']
-        docs = _documentos_do_usuario(request).filter(placa=placa, status='concluido')
+        docs = _documentos_da_empresa(request).filter(placa=placa, status='concluido')
         contexto['placa_buscada'] = placa
         if docs:
             doc = docs.first()
@@ -52,11 +59,12 @@ def enviar(request):
         if form.is_valid():
             modo = form.cleaned_data['modo']
             pipeline = 'openai' if modo == 'lote' else 'gemini'
-            lote = Lote.objects.create(modo=modo, enviado_por=request.user)
+            empresa = _empresa_atual(request)
+            lote = Lote.objects.create(modo=modo, empresa=empresa, enviado_por=request.user)
             reutilizados = 0
             for ordem, arquivo in enumerate(form.cleaned_data['arquivos']):
                 arquivo_hash = _hash_arquivo(arquivo)
-                candidatos = _documentos_do_usuario(request).filter(
+                candidatos = _documentos_da_empresa(request).filter(
                     hash_sha256=arquivo_hash, pipeline=pipeline)
                 existente = (
                     candidatos.filter(status='concluido').first()
@@ -77,6 +85,7 @@ def enviar(request):
                 else:
                     documento = Documento.objects.create(
                         arquivo=arquivo,
+                        empresa=empresa,
                         hash_sha256=arquivo_hash,
                         enviado_por=request.user,
                         pipeline=pipeline,
@@ -130,13 +139,13 @@ def conta(request):
 
 
 def pendentes_status(request):
-    total = _documentos_do_usuario(request).filter(
+    total = _documentos_da_empresa(request).filter(
         status__in=['aguardando', 'processando']).count()
     return JsonResponse({'total': total})
 
 
 def historico(request):
-    docs = _documentos_do_usuario(request).filter(status__in=['concluido', 'erro'])
+    docs = _documentos_da_empresa(request).filter(status__in=['concluido', 'erro'])
     placa = normaliza_placa(request.GET.get('placa', ''))
     if placa:
         docs = docs.filter(placa__startswith=placa)
@@ -146,7 +155,7 @@ def historico(request):
 
 
 def em_processamento(request):
-    docs = list(_documentos_do_usuario(request).filter(
+    docs = list(_documentos_da_empresa(request).filter(
         status__in=['aguardando', 'processando']).order_by('enviado_em'))
     aguardando = sum(1 for d in docs if d.status == 'aguardando')
     processando = len(docs) - aguardando
@@ -157,7 +166,7 @@ def em_processamento(request):
 
 
 def em_processamento_status(request):
-    docs = _documentos_do_usuario(request).filter(status__in=['aguardando', 'processando'])
+    docs = _documentos_da_empresa(request).filter(status__in=['aguardando', 'processando'])
     resumo = {
         'aguardando': docs.filter(status='aguardando').count(),
         'processando': docs.filter(status='processando').count(),
@@ -168,10 +177,10 @@ def em_processamento_status(request):
 
 
 def detalhe(request, pk):
-    doc = get_object_or_404(_documentos_do_usuario(request), pk=pk)
+    doc = get_object_or_404(_documentos_da_empresa(request), pk=pk)
     duplicata = None
     if doc.status == 'concluido' and doc.placa:
-        duplicata = (_documentos_do_usuario(request)
+        duplicata = (_documentos_da_empresa(request)
                      .filter(placa=doc.placa, status='concluido')
                      .exclude(pk=doc.pk).order_by('-enviado_em').first())
     return render(request, 'documentos/detalhe.html', {
@@ -182,7 +191,7 @@ def detalhe(request, pk):
 
 
 def reprocessar(request, pk):
-    doc = get_object_or_404(_documentos_do_usuario(request), pk=pk)
+    doc = get_object_or_404(_documentos_da_empresa(request), pk=pk)
     if request.method == 'POST':
         if doc.status not in {'erro', 'concluido'}:
             messages.warning(request, 'Este documento já está na fila.')
@@ -198,7 +207,7 @@ def reprocessar(request, pk):
 
 
 def excluir(request, pk):
-    doc = get_object_or_404(_documentos_do_usuario(request), pk=pk)
+    doc = get_object_or_404(_documentos_da_empresa(request), pk=pk)
     if request.method == 'POST':
         doc.delete()
         messages.success(request, 'Documento excluído.')
@@ -207,7 +216,7 @@ def excluir(request, pk):
 
 
 def arquivo(request, pk):
-    doc = get_object_or_404(_documentos_do_usuario(request), pk=pk)
+    doc = get_object_or_404(_documentos_da_empresa(request), pk=pk)
     resposta = FileResponse(doc.arquivo.open('rb'), content_type='application/pdf')
     resposta['Content-Disposition'] = content_disposition_header(
         as_attachment=False, filename=doc.nome_arquivo)
@@ -216,7 +225,7 @@ def arquivo(request, pk):
 
 
 def documento_status(request, pk):
-    doc = get_object_or_404(_documentos_do_usuario(request), pk=pk)
+    doc = get_object_or_404(_documentos_da_empresa(request), pk=pk)
     return JsonResponse({
         'status': doc.status,
         'status_label': doc.get_status_display(),
@@ -225,14 +234,14 @@ def documento_status(request, pk):
 
 
 def lotes(request):
-    lista = Lote.objects.filter(enviado_por=request.user).prefetch_related(
+    lista = Lote.objects.filter(empresa=_empresa_atual(request)).prefetch_related(
         'itens__documento')[:100]
     return render(request, 'documentos/lotes.html', {'lotes': lista})
 
 
 def lote_detalhe(request, pk):
     lote = get_object_or_404(
-        Lote.objects.filter(enviado_por=request.user).prefetch_related(
+        Lote.objects.filter(empresa=_empresa_atual(request)).prefetch_related(
             'itens__documento'), pk=pk)
     return render(request, 'documentos/lote_detalhe.html', {
         'lote': lote,
@@ -242,7 +251,7 @@ def lote_detalhe(request, pk):
 
 def lote_status(request, pk):
     lote = get_object_or_404(
-        Lote.objects.filter(enviado_por=request.user).prefetch_related(
+        Lote.objects.filter(empresa=_empresa_atual(request)).prefetch_related(
             'itens__documento'), pk=pk)
     resumo = lote.resumo()
     itens = [{
