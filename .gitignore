@@ -2,10 +2,20 @@
 __pycache__/
 *.pyc
 
+# Virtual Environments
+venv/
+.venv/
+*/venv/
+*/.venv/
+
+# IDEs
+.idea/
+.vscode/
+
 # Node
 node_modules/
 
-# Django runtime data (contém dados pessoais reais de clientes/veículos)
+# Django runtime data
 webapp/db.sqlite3
 webapp/media/
 webapp/staticfiles/
@@ -13,9 +23,10 @@ webapp/staticfiles/
 # Segredos locais
 .env
 *.env
+*.env.py
 !deploy/despachante.env.example
 
-# PDFs de teste (documentos reais com dados pessoais)
+# PDFs de teste
 /*.pdf
 
 # Config local do Claude Code
