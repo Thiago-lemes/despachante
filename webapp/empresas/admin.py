@@ -21,9 +21,8 @@ class EmpresaAdmin(EmpresaAdminMixin, admin.ModelAdmin):
 
 
 @admin.register(EmpresaUsuario)
-class EmpresaUsuarioAdmin(EmpresaAdminMixin, admin.ModelAdmin):
-    list_display = ('usuario', 'empresa', 'papel', 'ativo')
-    list_filter = ('empresa', 'papel', 'ativo')
-    search_fields = ('usuario__username', 'usuario__email', 'empresa__nome')
-    autocomplete_fields = ('usuario', 'empresa')
-    readonly_fields = ('criado_em', 'atualizado_em')
+class EmpresaUsuarioAdmin(admin.ModelAdmin):
+    list_display = ['usuario', 'empresa', 'papel', 'ativo']
+    list_filter = ['empresa', 'papel', 'ativo']
+    search_fields = ['usuario__username', 'usuario__email']
+    list_editable = ['ativo']

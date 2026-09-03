@@ -9,4 +9,6 @@ urlpatterns = [
     path('whatsapp/', include('atendimento.urls')),
     path('atendimento/', include('atendimento.urls')),
     path('', include('documentos.urls')),
+    path('', include('usuario.urls')),
+    path('api/v1/integracao/', include('integracao.urls')),
 ]

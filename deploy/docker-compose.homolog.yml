@@ -11,7 +11,12 @@ services:
     environment:
       WHATSAPP_HOOK_URL: http://host.docker.internal:8000/api/v1/integracao/webhooks/waha/piloto/
       WHATSAPP_HOOK_EVENTS: message
-      WAHA_API_KEY: ${WAHA_API_KEY:-chave-homolog-local}
+      # Credenciais fixas (copie do log ou use essas mesmas)
+      WAHA_API_KEY: d0552d66ebc04f2cbbd7ceb90e46fd69
+      WAHA_DASHBOARD_USERNAME: admin
+      WAHA_DASHBOARD_PASSWORD: 4da81fb327994a169a2e4d008f8a350e
+      WHATSAPP_SWAGGER_USERNAME: admin
+      WHATSAPP_SWAGGER_PASSWORD: 4da81fb327994a169a2e4d008f8a350e
     volumes:
       - waha_data:/app/.sessions
     restart: unless-stopped

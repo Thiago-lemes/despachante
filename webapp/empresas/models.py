@@ -29,7 +29,7 @@ class EmpresaUsuario(models.Model):
         OPERADOR_DOCUMENTOS = 'operador_documentos', 'Operador de documentos'
 
     empresa = models.ForeignKey(
-        Empresa, on_delete=models.CASCADE, related_name='usuarios')
+        Empresa, on_delete=models.CASCADE, related_name='usuario')
     usuario = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
         related_name='empresas_vinculadas')

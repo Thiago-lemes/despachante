@@ -38,7 +38,7 @@ class Migration(migrations.Migration):
                 ('ativo', models.BooleanField(default=True)),
                 ('criado_em', models.DateTimeField(auto_now_add=True)),
                 ('atualizado_em', models.DateTimeField(auto_now=True)),
-                ('empresa', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='usuarios', to='empresas.empresa')),
+                ('empresa', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='usuario', to='empresas.empresa')),
                 ('usuario', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='empresas_vinculadas', to=settings.AUTH_USER_MODEL)),
             ],
             options={
