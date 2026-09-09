@@ -88,7 +88,8 @@
                             class="w-full rounded border border-white/10 bg-slate-800 px-2 py-1.5 text-xs text-white focus:outline-none">
                         {% for vinculo in user.empresas_vinculadas.all %}
                         <option value="{{ vinculo.empresa.id }}"
-                                {% if vinculo.empresa.id== request.session.empresa_atual_id %}selected{% endif %}>
+                            {% if vinculo.empresa.id == request.session.empresa_atual_id %}selected{% endif %}>
+
                             {{ vinculo.empresa.nome }}
                         </option>
                         {% endfor %}

@@ -1,16 +1,70 @@
 {% extends 'documentos/base.html' %}
-{% block conteudo %}
-<div class="max-w-md mx-auto mt-10 p-6 bg-white rounded shadow">
-  <h2 class="text-2xl font-bold mb-4">Criar conta</h2>
-  <form method="post" class="space-y-4">
-    {% csrf_token %}
-    {{ form.as_p }}
-    <button type="submit" class="w-full bg-blue-600 text-white py-2 rounded hover:bg-blue-700">
-      Cadastrar
-    </button>
-  </form>
-  <p class="mt-4 text-sm text-gray-600">
-    Se o CNPJ ja estiver cadastrado, sua conta sera criada e aguardara aprovacao do administrador.
-  </p>
+{% block auth_conteudo %}
+<div class="flex min-h-screen items-center justify-center bg-slate-50 p-4">
+    <div class="w-full max-w-md rounded-xl bg-white p-8 shadow-lg">
+        <div class="mb-6 text-center">
+            <h2 class="text-2xl font-bold text-slate-900">Criar conta</h2>
+            <p class="mt-1 text-sm text-slate-500">Informe seus dados e o CNPJ da empresa</p>
+        </div>
+
+        <form method="post" class="space-y-4">
+            {% csrf_token %}
+
+            <div>
+                <label class="mb-1 block text-sm font-medium text-slate-700">Nome</label>
+                {{ form.first_name }}
+            </div>
+
+            <div>
+                <label class="mb-1 block text-sm font-medium text-slate-700">Sobrenome</label>
+                {{ form.last_name }}
+            </div>
+
+            <div>
+                <label class="mb-1 block text-sm font-medium text-slate-700">E-mail</label>
+                {{ form.email }}
+            </div>
+
+            <div>
+                <label class="mb-1 block text-sm font-medium text-slate-700">Usuário</label>
+                {{ form.username }}
+            </div>
+
+            <div>
+                <label class="mb-1 block text-sm font-medium text-slate-700">CNPJ da empresa</label>
+                {{ form.cnpj }}
+                <p class="mt-1 text-xs text-slate-500">Se o CNPJ já existir, você será vinculado como funcionário</p>
+            </div>
+
+            <div>
+                <label class="mb-1 block text-sm font-medium text-slate-700">Senha</label>
+                {{ form.password1 }}
+            </div>
+
+            <div>
+                <label class="mb-1 block text-sm font-medium text-slate-700">Confirmar senha</label>
+                {{ form.password2 }}
+            </div>
+
+            {% if form.errors %}
+            <div class="rounded bg-red-50 p-3 text-sm text-red-700">
+                {% for field, errors in form.errors.items %}
+                {% for error in errors %}
+                <p>• {{ error }}</p>
+                {% endfor %}
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            <button type="submit"
+                    class="w-full rounded-lg bg-kingdom py-2.5 font-semibold text-white hover:bg-kingdom-dark">
+                Cadastrar
+            </button>
+        </form>
+
+        <p class="mt-4 text-center text-sm text-slate-600">
+            Já tem conta? <a href="{% url 'login' %}" class="text-kingdom hover:underline">Entrar</a>
+        </p>
+    </div>
 </div>
 {% endblock %}
