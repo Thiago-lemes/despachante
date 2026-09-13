@@ -1,17 +1,21 @@
-# webapp/integracao/views.py
 import json
 import logging
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
-from django.views.decorators.http import require_POST
+from django.views.decorators.http import require_POST, require_GET
 from django.shortcuts import get_object_or_404
+from django.contrib.auth.decorators import login_not_required
 
+# Imports das Models
+from empresas.models import Empresa  # <-- Importação adicionada aqui
 from atendimento.models import Contato, Conversa, Mensagem
 from .models import WahaSessao, WebhookRecebido, EventoAtendimento
+from .services.waha_service import WahaService
 
 logger = logging.getLogger(__name__)
 
 
+@login_not_required
 @csrf_exempt
 @require_POST
 def webhook_waha(request, sessao):
@@ -76,3 +80,46 @@ def webhook_waha(request, sessao):
     )
 
     return JsonResponse({'ok': True})
+
+
+@require_GET
+def gerar_qr_code_empresa(request, empresa_id):
+    """
+    Inicia a sessão no WAHA para a empresa informada e devolve o QR Code.
+    """
+    try:
+        empresa = Empresa.objects.filter(id=empresa_id, ativa=True).first()
+        if not empresa:
+            return JsonResponse({'error': f'Empresa com ID {empresa_id} não encontrada.'}, status=404)
+
+        nome_sessao = f"empresa_{empresa.id}"
+        url_webhook = f"https://despachante.kingdomtech.com.br/api/v1/integracao/webhooks/waha/{nome_sessao}/"
+
+        # Garantir registro de WahaSessao no banco
+        WahaSessao.objects.get_or_create(
+            empresa=empresa,
+            nome_sessao=nome_sessao,
+            defaults={'ativa': True}
+        )
+
+        print("###########Chama a API do WAHA################")
+        WahaService.criar_e_iniciar_sessao(nome_sessao, url_webhook)
+        dados_qr = WahaService.obter_qr_code(nome_sessao)
+
+        if not dados_qr:
+            return JsonResponse({
+                'status': 'aguardando',
+                'mensagem': 'Sessão iniciada, aguardando geração do QR Code pelo WAHA.'
+            }, status=202)
+
+        return JsonResponse({
+            "sessao": nome_sessao,
+            "qr_code": dados_qr
+        })
+
+    except Exception as e:
+        logger.error(f"Erro ao gerar QR Code para empresa {empresa_id}: {str(e)}", exc_info=True)
+        return JsonResponse({
+            'error': 'Falha na comunicação com o servidor do WhatsApp (WAHA). Verifique se o serviço está ativo.',
+            'detalhes': str(e)
+        }, status=500)

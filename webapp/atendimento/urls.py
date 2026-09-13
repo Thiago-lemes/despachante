@@ -2,6 +2,7 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
+    path('', views.kanban_tarefas, name='kanban_index'),
     path('webhook/', views.webhook_receive, name='webhook_receive'),
     path('webhook/verify/', views.webhook_verify, name='webhook_verify'),
     path('kanban/', views.kanban_tarefas, name='kanban_tarefas'),

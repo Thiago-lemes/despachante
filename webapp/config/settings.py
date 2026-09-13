@@ -120,6 +120,13 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
+# Isenta URLs de Webhook e Health Check do LoginRequiredMiddleware nativo
+LOGIN_REQUIRED_EXEMPT_PATHS = [
+    r'^/api/v1/integracao/webhooks/',
+    r'^/atendimento/webhook/',
+    r'^/health/',
+]
+
 # Internationalization
 # https://docs.djangoproject.com/en/5.2/topics/i18n/
 
