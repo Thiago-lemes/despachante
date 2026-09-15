@@ -1,6 +1,7 @@
 module.exports = {
   content: [
-    './webapp/documentos/templates/**/*.html',
+    // Todos os apps: classes usadas fora daqui não chegam ao CSS compilado.
+    './webapp/*/templates/**/*.html',
     './webapp/documentos/forms.py',
     './webapp/documentos/static/documentos/app.js'
   ],

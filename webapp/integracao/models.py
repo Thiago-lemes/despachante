@@ -8,11 +8,24 @@ from django.db import models
 class WahaSessao(models.Model):
     """Mapeia uma sessão WAHA para uma empresa (tenant)."""
 
+    class Status(models.TextChoices):
+        DESCONHECIDO = 'UNKNOWN', 'Desconhecido'
+        PARADA = 'STOPPED', 'Parada'
+        INICIANDO = 'STARTING', 'Iniciando'
+        AGUARDANDO_QR = 'SCAN_QR_CODE', 'Aguardando leitura do QR Code'
+        CONECTADA = 'WORKING', 'Conectada'
+        FALHOU = 'FAILED', 'Falhou'
+
     empresa = models.ForeignKey(
         'empresas.Empresa', on_delete=models.CASCADE, related_name='sessoes_waha')
     nome_sessao = models.CharField(max_length=100, unique=True)
     ativa = models.BooleanField(default=True)
     webhook_secret = models.CharField(max_length=128, blank=True)
+    # Atualizado pelos eventos 'session.status' do WAHA e por cada consulta que
+    # o Django faz, evitando ida ao WAHA a cada verificação da interface.
+    status = models.CharField(
+        max_length=20, choices=Status.choices, default=Status.DESCONHECIDO)
+    status_atualizado_em = models.DateTimeField(null=True, blank=True)
     criada_em = models.DateTimeField(auto_now_add=True)
     atualizada_em = models.DateTimeField(auto_now=True)
 

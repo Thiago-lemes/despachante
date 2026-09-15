@@ -1,15 +1,16 @@
 from atendimento.models import Contato, Conversa, Mensagem, Servico, Tarefa
-from django.utils import timezone
 
 from integracao.models import EventoAtendimento
 from integracao.services.auditoria import registrar_evento
 from integracao.services.deduplicacao import WebhookDuplicado, registrar_webhook
 
 
+# Uma conversa segue ativa até ser encerrada. 'aguardando_humano' precisa entrar
+# aqui: é o estado em que a tarefa do Kanban coloca a conversa, e sem ele cada
+# nova mensagem do mesmo cliente abriria outra conversa e outro card.
 ESTADOS_ATIVOS = [
-    Conversa.Estado.TRIAGEM,
-    Conversa.Estado.COLETANDO_DOCUMENTOS,
-    Conversa.Estado.AGUARDANDO_ANALISE,
+    estado for estado in Conversa.Estado.values
+    if estado != Conversa.Estado.ENCERRADA
 ]
 
 
@@ -32,7 +33,8 @@ def obter_ou_criar_conversa(empresa, contato, servico=None):
 
 
 def registrar_mensagem_entrada(empresa, *, wa_id, conteudo, wa_message_id='',
-                               nome_contato='', conversa_id=None, ator='waha'):
+                               nome_contato='', telefone='', conversa_id=None,
+                               ator='waha'):
     if wa_message_id:
         existente = Mensagem.objects.filter(
             empresa=empresa, wa_message_id=wa_message_id).first()
@@ -41,11 +43,18 @@ def registrar_mensagem_entrada(empresa, *, wa_id, conteudo, wa_message_id='',
 
     contato, _ = Contato.objects.get_or_create(
         empresa=empresa, wa_id=wa_id,
-        defaults={'nome': nome_contato or ''},
+        defaults={'nome': nome_contato or '', 'telefone': telefone or ''},
     )
-    if nome_contato and not contato.nome:
+    # Nome e telefone podem chegar só em mensagens posteriores.
+    campos = []
+    if nome_contato and contato.nome != nome_contato:
         contato.nome = nome_contato
-        contato.save(update_fields=['nome'])
+        campos.append('nome')
+    if telefone and not contato.telefone:
+        contato.telefone = telefone
+        campos.append('telefone')
+    if campos:
+        contato.save(update_fields=campos)
 
     if conversa_id:
         conversa = Conversa.objects.filter(id=conversa_id, empresa=empresa).first()
@@ -124,10 +133,15 @@ def criar_tarefa(empresa, conversa_id, *, resumo_triagem='', origem='fluxo_compl
         return None
     if origem not in Tarefa.Origem.values:
         origem = Tarefa.Origem.FLUXO_COMPLETO
-    resumo = resumo_triagem or (
-        f'Cliente {conversa.contato.nome or conversa.contato.wa_id} — '
-        f'{conversa.servico.nome if conversa.servico else "serviço indefinido"}'
-    )
+    # Sem resumo explícito, a primeira mensagem do cliente descreve melhor o
+    # pedido do que qualquer texto genérico montado a partir do cadastro.
+    if not resumo_triagem:
+        primeira = Mensagem.objects.filter(
+            conversa=conversa, direcao=Mensagem.Direcao.ENTRADA
+        ).order_by('criada_em').values_list('conteudo', flat=True).first()
+        resumo_triagem = (primeira or '').strip()
+
+    resumo = resumo_triagem or 'Aguardando detalhes do cliente.'
     tarefa = Tarefa.objects.create(
         empresa=empresa,
         conversa=conversa,

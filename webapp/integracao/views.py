@@ -1,91 +1,40 @@
-import json
+import base64
 import logging
-from django.http import JsonResponse
-from django.views.decorators.csrf import csrf_exempt
-from django.views.decorators.http import require_POST, require_GET
-from django.shortcuts import get_object_or_404
-from django.contrib.auth.decorators import login_not_required
 
-# Imports das Models
-from empresas.models import Empresa  # <-- Importação adicionada aqui
-from atendimento.models import Contato, Conversa, Mensagem
-from .models import WahaSessao, WebhookRecebido, EventoAtendimento
+from django.conf import settings
+from django.http import JsonResponse
+from django.utils import timezone
+from django.views.decorators.http import require_GET
+
+from empresas.models import Empresa
+from .models import WahaSessao
 from .services.waha_service import WahaService
 
 logger = logging.getLogger(__name__)
 
 
-@login_not_required
-@csrf_exempt
-@require_POST
-def webhook_waha(request, sessao):
-    try:
-        payload = json.loads(request.body)
-    except json.JSONDecodeError:
-        return JsonResponse({'error': 'JSON invalido'}, status=400)
-
-    sessao_obj = get_object_or_404(WahaSessao, nome_sessao=sessao, ativa=True)
-    empresa = sessao_obj.empresa
-
-    wa_message_id = payload.get('data', {}).get('message', {}).get('id', '')
-    if not wa_message_id:
-        return JsonResponse({'error': 'message id nao encontrado'}, status=400)
-
-    webhook, criado = WebhookRecebido.objects.get_or_create(
-        origem=WebhookRecebido.Origem.WAHA,
-        id_externo=wa_message_id,
-        empresa=empresa,
-        defaults={'payload_hash': WebhookRecebido.hash_payload(request.body)}
-    )
-
-    if not criado:
-        return JsonResponse({'ok': True, 'duplicate': True})
-
-    data = payload.get('data', {})
-    message = data.get('message', {})
-    from_data = data.get('from', '')
-
-    wa_id = from_data.replace('@c.us', '').replace('@s.whatsapp.net', '')
-    conteudo = message.get('body', '')
-
-    contato, _ = Contato.objects.get_or_create(
-        empresa=empresa,
-        wa_id=wa_id,
-        defaults={'nome': data.get('notifyName', '')}
-    )
-
-    conversa, _ = Conversa.objects.get_or_create(
-        empresa=empresa,
-        contato=contato,
-        estado__in=['triagem', 'coletando_documentos', 'aguardando_analise'],
-        defaults={
-            'estado': Conversa.Estado.TRIAGEM,
-            'modo': Conversa.Modo.BOT,
-        }
-    )
-
-    Mensagem.objects.create(
-        empresa=empresa,
-        conversa=conversa,
-        direcao=Mensagem.Direcao.ENTRADA,
-        conteudo=conteudo,
-        wa_message_id=wa_message_id,
-    )
-
-    EventoAtendimento.objects.create(
-        empresa=empresa,
-        conversa=conversa,
-        tipo=EventoAtendimento.Tipo.MENSAGEM_RECEBIDA,
-        payload={'wa_id': wa_id, 'conteudo': conteudo[:100]}
-    )
-
-    return JsonResponse({'ok': True})
+def _persistir_status(sessao_obj, status):
+    """Mantém no banco o último status conhecido da sessão."""
+    if not status or status == sessao_obj.status:
+        return
+    if status not in WahaSessao.Status.values:
+        return
+    sessao_obj.status = status
+    sessao_obj.status_atualizado_em = timezone.now()
+    sessao_obj.save(update_fields=['status', 'status_atualizado_em', 'atualizada_em'])
 
 
 @require_GET
 def gerar_qr_code_empresa(request, empresa_id):
     """
-    Inicia a sessão no WAHA para a empresa informada e devolve o QR Code.
+    Retorna o status da sessão WhatsApp da empresa e, quando necessário,
+    (re)inicia a sessão no WAHA para gerar um novo QR Code.
+
+    Contrato de resposta:
+    - 200 {"status": "conectado"} — sessão já autenticada, nada a fazer.
+    - 200 {"status": "qrcode", "sessao": ..., "qr_code": ...} — QR pronto para escanear.
+    - 202 {"status": "aguardando"} — sessão iniciada, QR ainda não gerado pelo WAHA.
+    - 500 {"status": "erro", "error": ...} — falha de comunicação com o WAHA.
     """
     try:
         empresa = Empresa.objects.filter(id=empresa_id, ativa=True).first()
@@ -93,33 +42,56 @@ def gerar_qr_code_empresa(request, empresa_id):
             return JsonResponse({'error': f'Empresa com ID {empresa_id} não encontrada.'}, status=404)
 
         nome_sessao = f"empresa_{empresa.id}"
-        url_webhook = f"https://despachante.kingdomtech.com.br/api/v1/integracao/webhooks/waha/{nome_sessao}/"
+        url_webhook = f"{settings.SITE_URL}/api/v1/integracao/webhooks/waha/{nome_sessao}/"
 
-        # Garantir registro de WahaSessao no banco
-        WahaSessao.objects.get_or_create(
+        sessao_obj, _ = WahaSessao.objects.get_or_create(
             empresa=empresa,
             nome_sessao=nome_sessao,
             defaults={'ativa': True}
         )
 
-        print("###########Chama a API do WAHA################")
-        WahaService.criar_e_iniciar_sessao(nome_sessao, url_webhook)
-        dados_qr = WahaService.obter_qr_code(nome_sessao)
+        # Atalho: o WAHA avisa por webhook ('session.status') quando conecta,
+        # então uma sessão já conectada é respondida direto do banco, sem
+        # nenhuma ida ao WAHA a cada verificação da interface.
+        if sessao_obj.status == WahaSessao.Status.CONECTADA:
+            return JsonResponse({'status': 'conectado'})
 
-        if not dados_qr:
+        status_atual = WahaService.obter_status_sessao(nome_sessao)
+        _persistir_status(sessao_obj, status_atual)
+
+        if status_atual == 'WORKING':
+            return JsonResponse({'status': 'conectado'})
+
+        # Cria/inicia/reinicia conforme o estado atual. Não mexe na sessão
+        # quando ela já está subindo, senão o polling do front-end reiniciaria
+        # tudo a cada poucos segundos e ela nunca terminaria de subir.
+        WahaService.garantir_sessao_ativa(nome_sessao, url_webhook, status_atual)
+
+        # O QR só existe depois que a sessão chega em SCAN_QR_CODE. Em
+        # 'STARTING' a chamada ficaria pendurada esperando — melhor devolver
+        # 'aguardando' na hora e deixar o front-end perguntar de novo.
+        png_bytes = None
+        if status_atual == 'SCAN_QR_CODE':
+            png_bytes = WahaService.obter_qr_code(nome_sessao)
+
+        if not png_bytes:
             return JsonResponse({
                 'status': 'aguardando',
                 'mensagem': 'Sessão iniciada, aguardando geração do QR Code pelo WAHA.'
             }, status=202)
 
+        qr_code_data_uri = 'data:image/png;base64,' + base64.b64encode(png_bytes).decode('ascii')
+
         return JsonResponse({
-            "sessao": nome_sessao,
-            "qr_code": dados_qr
+            'status': 'qrcode',
+            'sessao': nome_sessao,
+            'qr_code': qr_code_data_uri,
         })
 
     except Exception as e:
         logger.error(f"Erro ao gerar QR Code para empresa {empresa_id}: {str(e)}", exc_info=True)
         return JsonResponse({
+            'status': 'erro',
             'error': 'Falha na comunicação com o servidor do WhatsApp (WAHA). Verifique se o serviço está ativo.',
             'detalhes': str(e)
         }, status=500)

@@ -135,6 +135,22 @@
     window.setInterval(atualizarPendentes, 5000);
   }
 
+  const tarefasLink = document.querySelector('[data-tarefas-novas-url]');
+  const tarefasBadge = document.querySelector('[data-tarefas-novas-badge]');
+  if (tarefasLink && tarefasBadge) {
+    const atualizarTarefasNovas = async () => {
+      try {
+        const response = await fetch(tarefasLink.dataset.tarefasNovasUrl, {headers: {'X-Requested-With': 'XMLHttpRequest'}});
+        if (!response.ok) return;
+        const data = await response.json();
+        tarefasBadge.textContent = data.total > 99 ? '99+' : data.total;
+        tarefasBadge.classList.toggle('hidden', !data.total);
+      } catch (_) { /* A proxima consulta tenta novamente. */ }
+    };
+    atualizarTarefasNovas();
+    window.setInterval(atualizarTarefasNovas, 5000);
+  }
+
   const pendingDoc = document.querySelector('[data-document-pending]');
   if (pendingDoc) {
     window.setInterval(async () => {

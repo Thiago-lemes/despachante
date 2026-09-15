@@ -2,7 +2,6 @@ from django.shortcuts import render, redirect
 from django.contrib.auth import login
 from django.contrib.auth.decorators import login_not_required
 from .forms import CadastroDespachanteForm
-from integracao.models import WahaSessao
 from empresas.models import EmpresaUsuario
 
 
@@ -14,22 +13,11 @@ def cadastro_despachante(request):
             user = form.save()
             login(request, user)
 
-            # 1. Recupera a empresa associada a este novo usuário
+            # Define a empresa ativa na sessão. A vinculação do WhatsApp fica
+            # a cargo do usuário, pelo botão "Vincular WhatsApp" do menu.
             vinculo = EmpresaUsuario.objects.filter(usuario=user, ativo=True).first()
             if vinculo:
-                empresa = vinculo.empresa
-                request.session['empresa_atual_id'] = empresa.id
-
-                # 2. Cria a sessão do WAHA para a nova empresa
-                nome_sessao = f"empresa_{empresa.id}"
-                WahaSessao.objects.get_or_create(
-                    empresa=empresa,
-                    nome_sessao=nome_sessao,
-                    defaults={'ativa': True}
-                )
-
-                # 3. Redireciona para a tela do QR Code da empresa
-                return redirect('gerar_qr_code_empresa', empresa_id=empresa.id)
+                request.session['empresa_atual_id'] = vinculo.empresa_id
 
             return redirect('busca')
     else:

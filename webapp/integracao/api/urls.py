@@ -15,7 +15,5 @@ urlpatterns = [
          name='integracao_documento_analisar'),
     path('documentos-recebidos/<int:documento_id>/revisao/', views.documento_revisar,
          name='integracao_documento_revisar'),
-    # path('webhooks/waha/<str:nome_sessao>/', views.webhook_waha, name='integracao_webhook_waha'),
-
     path('webhooks/waha/<str:sessao>/', views.webhook_waha, name='integracao_webhook_waha'),
 ]

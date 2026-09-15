@@ -5,7 +5,10 @@ from django.conf import settings
 
 class Contato(models.Model):
     empresa = models.ForeignKey('empresas.Empresa', on_delete=models.PROTECT, related_name='contatos')
+    # Identificador do WhatsApp: pode ser o telefone ou um LID (contas novas),
+    # por isso o número em si fica no campo 'telefone' quando o WAHA o informa.
     wa_id = models.CharField(max_length=20)
+    telefone = models.CharField(max_length=20, blank=True)
     nome = models.CharField(max_length=255, blank=True)
     criado_em = models.DateTimeField(auto_now_add=True)
 
@@ -13,6 +16,24 @@ class Contato(models.Model):
         constraints = [
             models.UniqueConstraint(fields=['empresa', 'wa_id'], name='contato_empresa_wa_id_unico'),
         ]
+
+    @property
+    def telefone_exibicao(self):
+        """Telefone em formato legível: +55 (41) 99857-7211."""
+        numero = ''.join(filter(str.isdigit, self.telefone or ''))
+        if not numero:
+            return ''
+        if numero.startswith('55') and len(numero) in (12, 13):
+            ddd, resto = numero[2:4], numero[4:]
+            return f'+55 ({ddd}) {resto[:-4]}-{resto[-4:]}'
+        if len(numero) in (10, 11):
+            ddd, resto = numero[:2], numero[2:]
+            return f'({ddd}) {resto[:-4]}-{resto[-4:]}'
+        return f'+{numero}'
+
+    @property
+    def nome_exibicao(self):
+        return self.nome or self.telefone_exibicao or 'Contato sem nome'
 
     def __str__(self):
         return f"{self.nome or 'Sem nome'} ({self.wa_id})"

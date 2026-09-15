@@ -1,632 +1,375 @@
-<!DOCTYPE html>
-<html lang="pt-br">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Kanban - Fila de Atendimento</title>
+{% extends 'documentos/base.html' %}
+
+{% block titulo %}Atendimento{% endblock %}
+
+{% block classe_pagina %}page-larga{% endblock %}
+
+{% block extra_css %}
     <style>
-        :root {
-            --primary: #2563eb;
-            --primary-dark: #1e40af;
-            --surface-light: #ffffff;
-            --surface-gray: #f8fafc;
-            --text-dark: #0f172a;
-            --text-gray: #64748b;
-            --border-light: #e2e8f0;
-            --success: #10b981;
+        /* Só o que utilitário não resolve: faixa de status, limite de linhas,
+           altura das colunas e o feedback de arrastar. */
+        .coluna-aberta { --status-cor: #f59e0b; }
+        .coluna-em_atendimento { --status-cor: #2563eb; }
+        .coluna-concluida { --status-cor: #18a34a; }
+        .coluna-cancelada { --status-cor: #94a3b8; }
+
+        .coluna-faixa { background: var(--status-cor, #94a3b8); }
+        .coluna-contador { background: var(--status-cor, #94a3b8); }
+        .tarefa-card { border-left: 3px solid var(--status-cor, #94a3b8); }
+
+        .coluna-lista {
+            min-height: 12rem;
+            max-height: calc(100vh - 21rem);
+            overflow-y: auto;
+            scrollbar-width: thin;
         }
 
-        @media (prefers-color-scheme: dark) {
-            :root {
-                --surface-light: #0f172a;
-                --surface-gray: #1e293b;
-                --text-dark: #f1f5f9;
-                --text-gray: #cbd5e1;
-                --border-light: #334155;
-            }
+        .coluna.is-drop-target .coluna-lista {
+            background: #f0fdf4;
+            outline: 2px dashed #18a34a;
+            outline-offset: -6px;
+            border-radius: 0.375rem;
         }
 
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+        .tarefa-card.is-dragging { opacity: .4; }
 
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            background: var(--surface-gray);
-            color: var(--text-dark);
-            font-size: 15px;
-            padding: 32px 20px;
-        }
-
-        .container {
-            max-width: 2000px;
-            margin: 0 auto;
-        }
-
-        .header-top {
-            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
-            padding: 20px 40px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            color: white;
-            border-radius: 12px 12px 0 0;
-        }
-
-        .header-logo-section {
-            display: flex;
-            align-items: center;
-            gap: 16px;
-        }
-
-        .header-logo {
-            width: 48px;
-            height: 48px;
-            background: rgba(255, 255, 255, 0.2);
-            border-radius: 8px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 24px;
-            font-weight: 700;
-        }
-
-        .header-title h1 {
-            font-size: 24px;
-            font-weight: 600;
-        }
-
-        .header-title p {
-            font-size: 13px;
-            opacity: 0.9;
-        }
-
-        .header-user {
-            background: rgba(255, 255, 255, 0.15);
-            padding: 10px 18px;
-            border-radius: 8px;
-            font-size: 14px;
-            font-weight: 500;
-        }
-
-        .header-filters {
-            background: var(--surface-light);
-            padding: 16px 40px;
-            border: 1px solid var(--border-light);
-            border-top: none;
-            display: flex;
-            gap: 20px;
-            align-items: center;
-            flex-wrap: wrap;
-            margin-bottom: 32px;
-            border-radius: 0 0 12px 12px;
-        }
-
-        .filter-group {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .filter-label {
-            font-size: 13px;
-            font-weight: 600;
-            color: var(--text-gray);
-            text-transform: uppercase;
-        }
-
-        .filter-select {
-            padding: 8px 12px;
-            border: 1px solid var(--border-light);
-            border-radius: 6px;
-            font-size: 13px;
-            color: var(--text-dark);
-            background: var(--surface-light);
-            cursor: pointer;
-            min-width: 140px;
-        }
-
-        .filter-reset {
-            background: none;
-            border: 1px solid var(--border-light);
-            padding: 8px 12px;
-            border-radius: 6px;
-            font-size: 13px;
-            font-weight: 600;
-            color: var(--text-gray);
-            cursor: pointer;
-        }
-
-        .kanban {
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 20px;
-        }
-
-        .coluna {
-            background: var(--surface-light);
-            border-radius: 12px;
-            display: flex;
-            flex-direction: column;
-            min-height: 750px;
-            border: 1px solid var(--border-light);
+        .texto-2-linhas {
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
             overflow: hidden;
         }
-
-        .coluna.drag-over {
-            background: rgba(37, 99, 235, 0.05);
-            border-color: var(--primary);
-        }
-
-        .coluna-header {
-            padding: 20px;
-            border-bottom: 1px solid var(--border-light);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            font-weight: 600;
-            font-size: 14px;
-            background: var(--surface-gray);
-        }
-
-        .coluna-count {
-            background: var(--primary);
-            color: white;
-            font-size: 12px;
-            font-weight: 700;
-            padding: 4px 10px;
-            border-radius: 6px;
-        }
-
-        .cards-container {
-            flex: 1;
-            padding: 16px;
-            overflow-y: auto;
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-        }
-
-        .card {
-            background: var(--surface-light);
-            border: 1px solid var(--border-light);
-            border-left: 4px solid var(--primary);
-            border-radius: 8px;
-            padding: 16px;
-            cursor: pointer;
-            user-select: none;
-            transition: all 0.2s ease;
-        }
-
-        .card:hover {
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
-            transform: translateY(-2px);
-        }
-
-        .card-protocolo {
-            font-family: monospace;
-            font-size: 11px;
-            font-weight: 700;
-            color: var(--primary);
-            background: rgba(37, 99, 235, 0.08);
-            padding: 4px 8px;
-            border-radius: 4px;
-            display: inline-block;
-            margin-bottom: 8px;
-        }
-
-        .card-nome {
-            font-size: 14px;
-            font-weight: 600;
-            margin-bottom: 8px;
-        }
-
-        .card-info {
-            font-size: 13px;
-            color: var(--text-gray);
-            margin-bottom: 4px;
-        }
-
-        .card-atendente {
-            background: #d1fae5;
-            color: #065f46;
-            padding: 4px 8px;
-            border-radius: 6px;
-            font-size: 12px;
-            font-weight: 600;
-            margin-top: 8px;
-            display: inline-block;
-        }
-
-        .vazio {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: var(--text-gray);
-            font-size: 13px;
-            padding: 60px 16px;
-        }
-
-        .modal {
-            display: none;
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.6);
-            z-index: 2000;
-            align-items: center;
-            justify-content: center;
-            padding: 20px;
-        }
-
-        .modal.active {
-            display: flex;
-        }
-
-        .modal-content {
-            background: var(--surface-light);
-            border-radius: 16px;
-            max-width: 650px;
-            width: 100%;
-            box-shadow: 0 25px 50px rgba(0, 0, 0, 0.25);
-            max-height: 90vh;
-            overflow-y: auto;
-        }
-
-        .modal-header {
-            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
-            color: white;
-            padding: 24px 28px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border-radius: 16px 16px 0 0;
-        }
-
-        .modal-close {
-            background: rgba(255, 255, 255, 0.2);
-            border: none;
-            color: white;
-            font-size: 20px;
-            cursor: pointer;
-            width: 32px;
-            height: 32px;
-            border-radius: 6px;
-        }
-
-        .modal-body {
-            padding: 32px;
-        }
-
-        .modal-field {
-            margin-bottom: 20px;
-        }
-
-        .modal-label {
-            font-size: 11px;
-            font-weight: 700;
-            color: var(--text-gray);
-            text-transform: uppercase;
-            margin-bottom: 6px;
-            display: block;
-        }
-
-        .modal-value {
-            font-size: 14px;
-            color: var(--text-dark);
-            padding: 12px 14px;
-            background: var(--surface-gray);
-            border-left: 4px solid var(--primary);
-            border-radius: 6px;
-        }
-
-        .doc-badge {
-            background: #d1fae5;
-            color: #065f46;
-            padding: 8px 12px;
-            border-radius: 6px;
-            font-size: 13px;
-            font-weight: 600;
-            display: inline-block;
-        }
-
-        .doc-badge.pending {
-            background: #fef3c7;
-            color: #92400e;
-        }
-
-        @media (max-width: 1400px) {
-            .kanban { grid-template-columns: repeat(2, 1fr); }
-        }
-
-        @media (max-width: 768px) {
-            .kanban { grid-template-columns: 1fr; }
-        }
     </style>
-</head>
-<body>
-<div class="container">
-    <div class="header-top">
-        <div class="header-logo-section">
-            <div class="header-logo">📋</div>
-            <div class="header-title">
-                <h1>Fila de Atendimento</h1>
-                <p>Despachante - Gestão de Tarefas</p>
+{% endblock %}
+
+{% block conteudo %}
+    <header class="page-heading">
+        <div>
+            <p class="eyebrow">Atendimento</p>
+            <h1 class="page-title">Fila de atendimento</h1>
+            <p class="page-subtitle">
+                Solicitações recebidas pelo WhatsApp. Arraste um card para mudar o estágio.
+            </p>
+        </div>
+        <div class="flex items-center gap-2">
+            <span class="badge-waiting" data-total-tarefas>{{ total_tarefas }} tarefa{{ total_tarefas|pluralize:"s" }}</span>
+            <button type="button" class="btn-secondary" onclick="window.location.reload()">
+                <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                     aria-hidden="true">
+                    <path d="M21 12a9 9 0 1 1-2.64-6.36"/>
+                    <path d="M21 3v6h-6"/>
+                </svg>
+                Atualizar
+            </button>
+        </div>
+    </header>
+
+    <section class="surface mb-6 py-4">
+        <div class="flex flex-col gap-4 sm:flex-row sm:items-end">
+            <div class="min-w-0 flex-1">
+                <label class="data-label" for="filtro-busca">Buscar</label>
+                <input id="filtro-busca" type="search" class="field mt-1" autocomplete="off"
+                       placeholder="Nome, telefone ou pedido do cliente" oninput="aplicarFiltros()">
             </div>
+            <div class="sm:w-56">
+                <label class="data-label" for="filtro-servico">Serviço</label>
+                <select id="filtro-servico" class="field mt-1" onchange="aplicarFiltros()">
+                    <option value="">Todos os serviços</option>
+                    {% for servico in servicos %}
+                        <option value="{{ servico.id }}">{{ servico.nome }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="sm:w-52">
+                <label class="data-label" for="filtro-atendente">Atendente</label>
+                <select id="filtro-atendente" class="field mt-1" onchange="aplicarFiltros()">
+                    <option value="">Todos</option>
+                    <option value="{{ user.username }}">Minhas tarefas</option>
+                    <option value="__sem__">Sem atendente</option>
+                </select>
+            </div>
+            <button type="button" class="btn-secondary" onclick="limparFiltros()">Limpar</button>
         </div>
-        <div class="header-user">
-            👤 {{ user.first_name|default:user.username }}
-        </div>
-    </div>
+    </section>
 
-    <div class="header-filters">
-        <div class="filter-group">
-            <label class="filter-label">Filtrar por status</label>
-            <select class="filter-select" id="filterStatus" onchange="aplicarFiltros()">
-                <option value="">Todos</option>
-                <option value="aberta">Aberta</option>
-                <option value="em_atendimento">Em atendimento</option>
-                <option value="concluida">Concluída</option>
-                <option value="cancelada">Cancelada</option>
-            </select>
-        </div>
-
-        <div class="filter-group">
-            <label class="filter-label">Filtrar por serviço</label>
-            <select class="filter-select" id="filterServico" onchange="aplicarFiltros()">
-                <option value="">Todos</option>
-                {% for servico in servicos %}
-                <option value="{{ servico.id }}">{{ servico.nome }}</option>
-                {% endfor %}
-            </select>
-        </div>
-
-        <div class="filter-group">
-            <label class="filter-label">Filtrar por atendente</label>
-            <select class="filter-select" id="filterAtendente" onchange="aplicarFiltros()">
-                <option value="">Todos</option>
-                <option value="{{ user.username }}">Minhas tarefas</option>
-            </select>
-        </div>
-
-        <button class="filter-reset" onclick="limparFiltros()">Limpar filtros</button>
-    </div>
-
-    <div class="kanban">
+    <div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
         {% for status_key, status_label in status_choices %}
-        <div class="coluna" data-status="{{ status_key }}">
-            <div class="coluna-header">
-                <span>{{ status_label }}</span>
-                {% for key, lista in tarefas_por_status.items %}
-                    {% if key == status_key %}
-                        <span class="coluna-count">{{ lista|length }}</span>
-                    {% endif %}
-                {% endfor %}
-            </div>
+            <section class="coluna coluna-{{ status_key }} flex flex-col rounded-md border border-steel bg-white shadow-panel"
+                     data-status="{{ status_key }}">
+                <div class="coluna-faixa h-1 rounded-t-md"></div>
 
-            <div class="cards-container">
-                {% for key, lista in tarefas_por_status.items %}
-                    {% if key == status_key %}
-                        {% if lista %}
+                <header class="flex items-center justify-between gap-2 border-b border-steel px-4 py-3">
+                    <h2 class="text-sm font-bold uppercase tracking-wide text-slate-600">{{ status_label }}</h2>
+                    <span class="coluna-contador inline-flex h-6 min-w-6 items-center justify-center rounded-full px-2 text-xs font-bold text-white"
+                          data-contador-coluna>0</span>
+                </header>
+
+                <div class="coluna-lista flex flex-col gap-3 p-3">
+                    {% for key, lista in tarefas_por_status.items %}
+                        {% if key == status_key %}
                             {% for tarefa in lista %}
-                            <div class="card" draggable="true"
-                                 data-tarefa-id="{{ tarefa.id }}"
-                                 data-modal-id="{{ tarefa.id }}"
-                                 data-modal-cliente="{{ tarefa.contato.nome|default:tarefa.contato.wa_id|escapejs }}"
-                                 data-modal-telefone="{{ tarefa.contato.wa_id }}"
-                                 data-modal-servico="{% if tarefa.servico %}{{ tarefa.servico.nome|escapejs }}{% else %}Sem serviço{% endif %}"
-                                 data-modal-servico-id="{% if tarefa.servico %}{{ tarefa.servico.id }}{% endif %}"
-                                 data-modal-descricao="{{ tarefa.resumo_triagem|escapejs }}"
-                                 data-modal-atendente="{% if tarefa.atendente %}{{ tarefa.atendente.username|escapejs }}{% endif %}"
-                                 data-modal-docs="{{ tarefa.conversa.documentos_recebidos.count|default:0 }}">
+                                <article class="tarefa-card group cursor-pointer rounded border border-steel bg-white p-3 transition-shadow hover:shadow-panel"
+                                         draggable="true"
+                                         data-tarefa-id="{{ tarefa.id }}"
+                                         data-servico-id="{% if tarefa.servico %}{{ tarefa.servico.id }}{% endif %}"
+                                         data-atendente="{% if tarefa.atendente %}{{ tarefa.atendente.username }}{% else %}__sem__{% endif %}"
+                                         data-busca="{{ tarefa.contato.nome_exibicao|lower }} {{ tarefa.contato.telefone }} {{ tarefa.contato.wa_id }} {{ tarefa.resumo_triagem|lower }}"
+                                         data-cliente="{{ tarefa.contato.nome_exibicao }}"
+                                         data-telefone="{{ tarefa.contato.telefone_exibicao|default:tarefa.contato.wa_id }}"
+                                         data-servico="{% if tarefa.servico %}{{ tarefa.servico.nome }}{% else %}Não definido{% endif %}"
+                                         data-descricao="{{ tarefa.resumo_triagem }}"
+                                         data-atendente-nome="{% if tarefa.atendente %}{{ tarefa.atendente.get_full_name|default:tarefa.atendente.username }}{% endif %}"
+                                         data-protocolo="{{ tarefa.id|stringformat:'.8s'|upper }}"
+                                         data-criada="{{ tarefa.criada_em|date:'d/m/Y H:i' }}"
+                                         data-docs="{{ tarefa.conversa.documentos_recebidos.count }}">
 
-                                <div class="card-protocolo">#{{ tarefa.id|stringformat:".8s"|upper }}</div>
-                                <div class="card-nome">{{ tarefa.contato.nome|default:"Contato sem nome" }}</div>
-                                <div class="card-info">📱 {{ tarefa.contato.wa_id }}</div>
-                                <div class="card-info">🔧 {% if tarefa.servico %}{{ tarefa.servico.nome }}{% else %}Sem serviço{% endif %}</div>
+                                    <div class="flex items-start gap-3">
+                                        <span class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-100 text-sm font-bold text-slate-600">
+                                            {{ tarefa.contato.nome_exibicao|first|upper }}
+                                        </span>
+                                        <div class="min-w-0 flex-1">
+                                            <p class="truncate text-sm font-bold text-ink">{{ tarefa.contato.nome_exibicao }}</p>
+                                            <p class="truncate font-data text-xs text-slate-500">
+                                                {{ tarefa.contato.telefone_exibicao|default:tarefa.contato.wa_id }}
+                                            </p>
+                                        </div>
+                                    </div>
 
-                                {% if tarefa.atendente %}
-                                <div class="card-atendente">
-                                    ✓ {{ tarefa.atendente.username }}
-                                </div>
-                                {% endif %}
-                            </div>
+                                    {% if tarefa.resumo_triagem %}
+                                        <p class="texto-2-linhas mt-2.5 text-sm leading-5 text-slate-700">
+                                            {{ tarefa.resumo_triagem }}
+                                        </p>
+                                    {% endif %}
+
+                                    <div class="mt-3 flex flex-wrap items-center gap-1.5">
+                                        {% if tarefa.servico %}
+                                            <span class="badge bg-slate-100 text-slate-700">{{ tarefa.servico.nome }}</span>
+                                        {% endif %}
+                                        {% if tarefa.conversa.documentos_recebidos.count %}
+                                            <span class="badge-success">
+                                                {{ tarefa.conversa.documentos_recebidos.count }} doc{{ tarefa.conversa.documentos_recebidos.count|pluralize:"s" }}
+                                            </span>
+                                        {% endif %}
+                                    </div>
+
+                                    <footer class="mt-3 flex items-center justify-between gap-2 border-t border-slate-100 pt-2">
+                                        <span class="text-xs text-slate-400" title="{{ tarefa.criada_em|date:'d/m/Y H:i' }}">
+                                            há {{ tarefa.criada_em|timesince }}
+                                        </span>
+                                        <span class="truncate text-xs {% if tarefa.atendente %}font-semibold text-kingdom{% else %}text-slate-400{% endif %}"
+                                              data-atendente-rotulo>
+                                            {% if tarefa.atendente %}{{ tarefa.atendente.get_full_name|default:tarefa.atendente.username }}{% else %}Sem atendente{% endif %}
+                                        </span>
+                                    </footer>
+                                </article>
                             {% endfor %}
-                        {% else %}
-                            <div class="vazio">Nenhuma tarefa</div>
                         {% endif %}
-                    {% endif %}
-                {% endfor %}
-            </div>
-        </div>
+                    {% endfor %}
+
+                    <p class="hidden py-10 text-center text-sm text-slate-400" data-coluna-vazia>
+                        Nenhuma tarefa aqui
+                    </p>
+                </div>
+            </section>
         {% endfor %}
     </div>
-</div>
 
-<div class="modal" id="modal">
-    <div class="modal-content">
-        <div class="modal-header">
-            <h2>📋 Detalhes da tarefa</h2>
-            <button class="modal-close" onclick="fecharModal()">✕</button>
-        </div>
-        <div class="modal-body">
-            <div class="modal-field">
-                <span class="modal-label">Protocolo</span>
-                <div class="modal-value" id="modal-protocolo"></div>
+    <dialog class="w-full max-w-lg rounded-md border border-steel p-0 shadow-panel backdrop:bg-black/50" id="dialogo-tarefa">
+        <header class="flex items-start justify-between gap-4 border-b border-steel px-6 py-4">
+            <div>
+                <p class="eyebrow">Tarefa <span id="dlg-protocolo" class="font-data"></span></p>
+                <h2 class="section-title" id="dlg-cliente"></h2>
             </div>
+            <button type="button" class="icon-button h-9 w-9" onclick="fecharDialogo()" aria-label="Fechar">
+                <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                     aria-hidden="true">
+                    <path d="M18 6 6 18M6 6l12 12"/>
+                </svg>
+            </button>
+        </header>
 
-            <div class="modal-field">
-                <span class="modal-label">👤 Cliente</span>
-                <div class="modal-value" id="modal-cliente" style="font-weight: 600;"></div>
-            </div>
-
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
-                <div class="modal-field">
-                    <span class="modal-label">📱 Telefone</span>
-                    <div class="modal-value" id="modal-telefone"></div>
+        <div class="px-6 py-5">
+            <div class="data-grid">
+                <div class="data-item">
+                    <p class="data-label">Telefone</p>
+                    <p class="data-value font-data" id="dlg-telefone"></p>
                 </div>
-                <div class="modal-field">
-                    <span class="modal-label">🔧 Serviço</span>
-                    <div class="modal-value" id="modal-servico"></div>
+                <div class="data-item">
+                    <p class="data-label">Serviço</p>
+                    <p class="data-value" id="dlg-servico"></p>
+                </div>
+                <div class="data-item">
+                    <p class="data-label">Aberta em</p>
+                    <p class="data-value" id="dlg-criada"></p>
+                </div>
+                <div class="data-item">
+                    <p class="data-label">Atendente</p>
+                    <p class="data-value" id="dlg-atendente"></p>
                 </div>
             </div>
 
-            <div class="modal-field">
-                <span class="modal-label">📝 Descrição</span>
-                <div class="modal-value" id="modal-descricao"></div>
+            <div class="mt-5">
+                <p class="data-label">Pedido do cliente</p>
+                <p class="mt-1 whitespace-pre-line rounded border border-steel bg-slate-50 p-3 text-sm leading-6 text-ink"
+                   id="dlg-descricao"></p>
             </div>
 
-            <div class="modal-field">
-                <span class="modal-label">📄 Documentos recebidos</span>
-                <div class="modal-docs" id="modal-docs"></div>
-            </div>
-
-            <div class="modal-field">
-                <span class="modal-label">👨‍💼 Atendente responsável</span>
-                <div class="modal-value" id="modal-atendente"></div>
+            <div class="mt-5">
+                <p class="data-label">Documentos recebidos</p>
+                <p class="mt-1" id="dlg-docs"></p>
             </div>
         </div>
-    </div>
-</div>
 
-<script>
-    function abrirModal(id, cliente, telefone, servico, descricao, atendente, docCount) {
-        document.getElementById('modal-protocolo').textContent = '#' + id.substring(0, 8).toUpperCase();
-        document.getElementById('modal-cliente').textContent = cliente;
-        document.getElementById('modal-telefone').textContent = telefone;
-        document.getElementById('modal-servico').textContent = servico;
-        document.getElementById('modal-descricao').textContent = descricao || 'Sem descrição';
-        document.getElementById('modal-atendente').textContent = atendente ? '✓ ' + atendente : '⏳ Não atribuído';
+        <footer class="flex justify-end border-t border-steel px-6 py-4">
+            <button type="button" class="btn-secondary" onclick="fecharDialogo()">Fechar</button>
+        </footer>
+    </dialog>
 
-        const docsDiv = document.getElementById('modal-docs');
-        docsDiv.innerHTML = '';
-        if (parseInt(docCount) > 0) {
-            docsDiv.innerHTML = '<div class="doc-badge">✓ ' + docCount + ' documento(s)</div>';
-        } else {
-            docsDiv.innerHTML = '<div class="doc-badge pending">⏳ Aguardando documentos</div>';
+    <script>
+        const dialogo = document.getElementById('dialogo-tarefa');
+
+        function abrirDialogo(card) {
+            document.getElementById('dlg-protocolo').textContent = '#' + card.dataset.protocolo;
+            document.getElementById('dlg-cliente').textContent = card.dataset.cliente;
+            document.getElementById('dlg-telefone').textContent = card.dataset.telefone;
+            document.getElementById('dlg-servico').textContent = card.dataset.servico;
+            document.getElementById('dlg-criada').textContent = card.dataset.criada;
+            document.getElementById('dlg-atendente').textContent = card.dataset.atendenteNome || 'Não atribuído';
+            document.getElementById('dlg-descricao').textContent =
+                card.dataset.descricao || 'O cliente ainda não detalhou o pedido.';
+
+            const docs = parseInt(card.dataset.docs, 10) || 0;
+            const elDocs = document.getElementById('dlg-docs');
+            elDocs.textContent = docs ? docs + ' documento(s) recebido(s)' : 'Nenhum documento recebido';
+            elDocs.className = docs ? 'mt-1 badge-success' : 'mt-1 badge-waiting';
+
+            dialogo.showModal();
         }
-        document.getElementById('modal').classList.add('active');
-    }
 
-    function fecharModal() {
-        document.getElementById('modal').classList.remove('active');
-    }
+        function fecharDialogo() {
+            dialogo.close();
+        }
 
-    document.getElementById('modal').addEventListener('click', function (e) {
-        if (e.target === this) fecharModal();
-    });
+        let cardArrastado = null;
 
-    document.querySelectorAll('.card').forEach(function (card) {
-        card.addEventListener('click', function (e) {
-            const id = this.dataset.modalId;
-            const cliente = this.dataset.modalCliente;
-            const telefone = this.dataset.modalTelefone;
-            const servico = this.dataset.modalServico;
-            const descricao = this.dataset.modalDescricao;
-            const atendente = this.dataset.modalAtendente;
-            const docs = this.dataset.modalDocs;
-            abrirModal(id, cliente, telefone, servico, descricao, atendente, docs);
-        });
-    });
+        document.querySelectorAll('.tarefa-card').forEach(function (card) {
+            card.addEventListener('click', function () {
+                abrirDialogo(this);
+            });
 
-    let draggedCard = null;
+            card.addEventListener('dragstart', function (e) {
+                cardArrastado = this;
+                this.classList.add('is-dragging');
+                e.dataTransfer.effectAllowed = 'move';
+            });
 
-    document.querySelectorAll('.card').forEach(function (card) {
-        card.addEventListener('dragstart', function (e) {
-            draggedCard = this;
-            this.classList.add('dragging');
-            e.dataTransfer.effectAllowed = 'move';
-        });
-
-        card.addEventListener('dragend', function () {
-            this.classList.remove('dragging');
-            draggedCard = null;
-        });
-    });
-
-    document.querySelectorAll('.coluna').forEach(function (coluna) {
-        coluna.addEventListener('dragover', function (e) {
-            e.preventDefault();
-            e.dataTransfer.dropEffect = 'move';
-            this.classList.add('drag-over');
-        });
-
-        coluna.addEventListener('dragleave', function () {
-            this.classList.remove('drag-over');
-        });
-
-        coluna.addEventListener('drop', function (e) {
-            e.preventDefault();
-            this.classList.remove('drag-over');
-
-            if (!draggedCard) return;
-
-            const tarefaId = draggedCard.dataset.tarefaId;
-            const novoStatus = this.dataset.status;
-
-            fetch('{% url "atualizar_status_tarefa" %}', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRFToken': '{{ csrf_token }}'
-                },
-                body: JSON.stringify({
-                    tarefa_id: tarefaId,
-                    novo_status: novoStatus
-                })
-            })
-            .then(function (r) { return r.json(); })
-            .then(function (data) {
-                if (data.status === 'ok') {
-                    location.reload();
-                }
+            card.addEventListener('dragend', function () {
+                this.classList.remove('is-dragging');
+                cardArrastado = null;
             });
         });
-    });
 
-    function aplicarFiltros() {
-        const statusFilter = document.getElementById('filterStatus').value;
-        const servicoFilter = document.getElementById('filterServico').value;
-        const atendenteFilter = document.getElementById('filterAtendente').value;
+        document.querySelectorAll('.coluna').forEach(function (coluna) {
+            coluna.addEventListener('dragover', function (e) {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+                this.classList.add('is-drop-target');
+            });
 
-        document.querySelectorAll('.card').forEach(function (card) {
-            let mostrar = true;
+            coluna.addEventListener('dragleave', function (e) {
+                if (!this.contains(e.relatedTarget)) this.classList.remove('is-drop-target');
+            });
 
-            if (statusFilter) {
-                const coluna = card.closest('.coluna');
-                if (coluna.dataset.status !== statusFilter) {
-                    mostrar = false;
-                }
-            }
+            coluna.addEventListener('drop', function (e) {
+                e.preventDefault();
+                this.classList.remove('is-drop-target');
+                if (!cardArrastado) return;
 
-            if (mostrar && servicoFilter) {
-                const servicoId = card.dataset.modalServicoId;
-                if (servicoId !== servicoFilter) {
-                    mostrar = false;
-                }
-            }
+                // Guarda a referência agora: 'dragend' zera cardArrastado antes
+                // de a resposta do servidor chegar.
+                const card = cardArrastado;
+                const colunaOrigem = card.closest('.coluna');
+                const novoStatus = this.dataset.status;
+                if (colunaOrigem === this) return;
 
-            if (mostrar && atendenteFilter) {
-                const atendente = card.dataset.modalAtendente;
-                if (atendente !== atendenteFilter) {
-                    mostrar = false;
-                }
-            }
+                // Move na tela antes da resposta; se o servidor recusar, volta.
+                const listaDestino = this.querySelector('.coluna-lista');
+                listaDestino.insertBefore(card, listaDestino.querySelector('[data-coluna-vazia]'));
+                atualizarContadores();
 
-            card.style.display = mostrar ? '' : 'none';
+                fetch('{% url "atualizar_status_tarefa" %}', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': '{{ csrf_token }}'
+                    },
+                    body: JSON.stringify({
+                        tarefa_id: card.dataset.tarefaId,
+                        novo_status: novoStatus
+                    })
+                })
+                    .then(function (r) { return r.json(); })
+                    .then(function (dados) {
+                        if (dados.status !== 'ok') throw new Error(dados.erro || 'erro');
+                        aplicarAtendente(card, dados.atendente || '');
+                    })
+                    .catch(function () {
+                        const listaOrigem = colunaOrigem.querySelector('.coluna-lista');
+                        listaOrigem.insertBefore(card, listaOrigem.querySelector('[data-coluna-vazia]'));
+                        atualizarContadores();
+                        alert('Não foi possível mover a tarefa. Tente novamente.');
+                    });
+            });
         });
-    }
 
-    function limparFiltros() {
-        document.getElementById('filterStatus').value = '';
-        document.getElementById('filterServico').value = '';
-        document.getElementById('filterAtendente').value = '';
-        aplicarFiltros();
-    }
-</script>
-</body>
-</html>
+        function aplicarAtendente(card, nome) {
+            card.dataset.atendenteNome = nome;
+            card.dataset.atendente = nome ? '{{ user.username }}' : '__sem__';
+
+            const rotulo = card.querySelector('[data-atendente-rotulo]');
+            if (!rotulo) return;
+            rotulo.textContent = nome || 'Sem atendente';
+            rotulo.classList.toggle('font-semibold', Boolean(nome));
+            rotulo.classList.toggle('text-kingdom', Boolean(nome));
+            rotulo.classList.toggle('text-slate-400', !nome);
+        }
+
+        function atualizarContadores() {
+            document.querySelectorAll('.coluna').forEach(function (coluna) {
+                const visiveis = Array.from(coluna.querySelectorAll('.tarefa-card'))
+                    .filter(function (c) { return c.style.display !== 'none'; });
+                coluna.querySelector('[data-contador-coluna]').textContent = visiveis.length;
+                coluna.querySelector('[data-coluna-vazia]').classList.toggle('hidden', visiveis.length > 0);
+            });
+
+            const total = document.querySelectorAll('.tarefa-card').length;
+            const rotulo = document.querySelector('[data-total-tarefas]');
+            if (rotulo) rotulo.textContent = total + (total === 1 ? ' tarefa' : ' tarefas');
+        }
+
+        function aplicarFiltros() {
+            const busca = document.getElementById('filtro-busca').value.trim().toLowerCase();
+            const servico = document.getElementById('filtro-servico').value;
+            const atendente = document.getElementById('filtro-atendente').value;
+
+            document.querySelectorAll('.tarefa-card').forEach(function (card) {
+                let mostrar = true;
+                if (busca && !card.dataset.busca.includes(busca)) mostrar = false;
+                if (mostrar && servico && card.dataset.servicoId !== servico) mostrar = false;
+                if (mostrar && atendente && card.dataset.atendente !== atendente) mostrar = false;
+                card.style.display = mostrar ? '' : 'none';
+            });
+
+            atualizarContadores();
+        }
+
+        function limparFiltros() {
+            document.getElementById('filtro-busca').value = '';
+            document.getElementById('filtro-servico').value = '';
+            document.getElementById('filtro-atendente').value = '';
+            aplicarFiltros();
+        }
+
+        atualizarContadores();
+    </script>
+{% endblock %}

@@ -1,0 +1,41 @@
+name: despachante-dev
+
+# Ambiente local de desenvolvimento: sobe só o WAHA, isolado do stack de
+# homologação (deploy/docker-compose.homolog.yml), para testar o fluxo de
+# QR Code/vínculo do WhatsApp com o Django rodando via `manage.py runserver`
+# na máquina host (fora de container).
+#
+# Uso:
+#   docker compose -f deploy/docker-compose.dev.yml up -d
+#
+# No seu .env local (webapp/.env ou variáveis de ambiente da sessão), ajuste:
+#   WAHA_BASE_URL=http://localhost:3001
+#   WAHA_API_KEY=dev-local-key
+#   SITE_URL=http://host.docker.internal:8000
+#
+# Dashboard: http://localhost:3001/dashboard (usuário/senha abaixo)
+# Porta 3001 (em vez de 3000) para não colidir com outro WAHA já em uso na máquina.
+# WAHA_API_KEY fixa (senão o WAHA gera uma chave aleatória a cada start e o
+# Django nunca autentica).
+
+services:
+  waha:
+    image: devlikeapro/waha:latest
+    ports:
+      - '3001:3000'
+    environment:
+      WAHA_API_KEY: dev-local-key
+      WHATSAPP_HOOK_EVENTS: message
+      # NOWEB não depende de Chromium/Puppeteer — evita o TimeoutError de
+      # lançamento do Chrome dentro do container (comum no Docker Desktop).
+      WHATSAPP_DEFAULT_ENGINE: NOWEB
+      WAHA_DASHBOARD_USERNAME: admin
+      WAHA_DASHBOARD_PASSWORD: admin123
+      WHATSAPP_SWAGGER_USERNAME: admin
+      WHATSAPP_SWAGGER_PASSWORD: admin123
+    volumes:
+      - waha_dev_data:/app/.sessions
+    restart: unless-stopped
+
+volumes:
+  waha_dev_data:

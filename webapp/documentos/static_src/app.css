@@ -22,6 +22,8 @@
   .mobile-bar { @apply sticky top-0 z-30 flex h-16 items-center justify-between border-b border-steel bg-white px-4 lg:hidden; }
   .icon-button { @apply inline-flex h-10 w-10 items-center justify-center rounded border border-steel bg-white text-ink transition-colors hover:bg-slate-100; }
   .page { @apply mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 lg:px-8 lg:py-8; }
+  /* Telas largas, como o Kanban, que não cabem na coluna de leitura padrão. */
+  .page-larga { @apply max-w-none; }
   .page-heading { @apply mb-6 flex flex-col justify-between gap-3 border-b border-steel pb-5 sm:flex-row sm:items-end; }
   .eyebrow { @apply mb-1 text-xs font-bold uppercase text-kingdom; letter-spacing: .08em; }
   .page-title { @apply text-2xl font-bold text-ink sm:text-3xl; }
@@ -41,6 +43,8 @@
   .badge-error { @apply badge bg-red-100 text-red-800; }
   .badge-waiting { @apply badge bg-slate-200 text-slate-700; }
   .badge-working { @apply badge bg-amber-100 text-amber-800; }
+  /* Contador de não lidos sobre o ícone, no estilo do WhatsApp. */
+  .badge-notificacao { @apply absolute -right-2 -top-2 flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1.5 text-[11px] font-bold leading-none text-white ring-2 ring-ink; }
   .alert { @apply mb-4 rounded border px-4 py-3 text-sm; }
   .alert-success { @apply alert border-green-200 bg-green-50 text-green-900; }
   .alert-error { @apply alert border-red-200 bg-red-50 text-red-900; }

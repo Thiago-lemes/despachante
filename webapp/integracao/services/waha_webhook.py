@@ -19,6 +19,52 @@ def _normalizar_wa_id(valor: str) -> str:
     return numero
 
 
+def _e_telefone(identificador: str) -> bool:
+    """
+    Distingue telefone de LID. Contas novas do WhatsApp chegam como
+    '<lid>@lid', que é um id interno e não um número discável.
+    """
+    return '@lid' not in (identificador or '')
+
+
+def _extrair_nome(payload: dict) -> str:
+    """
+    O nome do contato muda de lugar conforme o engine do WAHA:
+    NOWEB usa 'pushName', WEBJS usa '_data.notifyName'.
+    """
+    dados = payload.get('_data') if isinstance(payload.get('_data'), dict) else {}
+    for origem, chave in (
+        (payload, 'pushName'),
+        (payload, 'notifyName'),
+        (dados, 'pushName'),
+        (dados, 'notifyName'),
+    ):
+        nome = (origem.get(chave) or '').strip()
+        if nome:
+            return nome
+    return ''
+
+
+def _extrair_telefone(payload: dict, from_id: str) -> str:
+    """Número discável, quando o WAHA o informa junto do LID."""
+    if _e_telefone(from_id):
+        return _normalizar_wa_id(from_id)
+
+    dados = payload.get('_data') if isinstance(payload.get('_data'), dict) else {}
+    chave = dados.get('key') if isinstance(dados.get('key'), dict) else {}
+    for origem, campo in (
+        (payload, 'participant'),
+        (chave, 'senderPn'),
+        (chave, 'participantPn'),
+        (chave, 'remoteJidAlt'),
+        (dados, 'senderPn'),
+    ):
+        valor = origem.get(campo) or ''
+        if valor and _e_telefone(valor):
+            return _normalizar_wa_id(valor)
+    return ''
+
+
 def _extrair_mensagem_waha(corpo: dict):
     """Interpreta payloads comuns do WAHA (message / message.any)."""
     evento = corpo.get('event', '')
@@ -43,9 +89,6 @@ def _extrair_mensagem_waha(corpo: dict):
         texto = payload['caption']
 
     msg_id = str(payload.get('id') or payload.get('messageId') or '')
-    nome = ''
-    if isinstance(payload.get('_data'), dict):
-        nome = payload['_data'].get('notifyName') or ''
 
     wa_id = _normalizar_wa_id(from_id)
     if not wa_id:
@@ -55,7 +98,8 @@ def _extrair_mensagem_waha(corpo: dict):
         'wa_id': wa_id,
         'conteudo': str(texto),
         'wa_message_id': msg_id,
-        'nome_contato': nome,
+        'nome_contato': _extrair_nome(payload),
+        'telefone': _extrair_telefone(payload, from_id),
         'tipo_midia': payload.get('mimetype') or payload.get('type') or 'text',
         'media_url': payload.get('mediaUrl') or payload.get('media') or '',
     }
@@ -86,11 +130,13 @@ def processar_webhook_waha(sessao: WahaSessao, corpo: dict, payload_bruto: bytes
         conteudo=mensagem['conteudo'],
         wa_message_id=mensagem['wa_message_id'],
         nome_contato=mensagem['nome_contato'],
+        telefone=mensagem['telefone'],
         ator='waha',
     )
     return {
         'status': 'ok',
         'mensagem_id': msg.id,
         'conversa_id': msg.conversa_id,
+        'conteudo': mensagem['conteudo'],
         'criada': criada,
     }

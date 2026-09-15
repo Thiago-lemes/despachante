@@ -1,15 +1,16 @@
 import json
 import logging
 
-from atendimento.models import Contato, Conversa, Mensagem, Tarefa, Servico
-from atendimento.models import DocumentoRecebido
+from atendimento.models import DocumentoRecebido, Tarefa
+from django.conf import settings
 from django.contrib.auth.decorators import login_not_required
 from django.http import JsonResponse
+from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
-from empresas.models import Empresa
-from integracao.auth import api_empresa_required
+from integracao.auth import api_empresa_required, verificar_assinatura_webhook
 from integracao.models import WahaSessao
+from integracao.services.waha_webhook import processar_webhook_waha
 from integracao.services.conversas import (
     criar_tarefa,
     obter_conversa,
@@ -238,144 +239,101 @@ def documento_revisar(request, documento_id):
     })
 
 
-# @login_not_required
-# @csrf_exempt
-# @require_http_methods(['POST'])
-# def webhook_waha(request, nome_sessao):
-#     from django.conf import settings
-#     from integracao.services.waha_webhook import processar_webhook_waha
-#
-#     sessao = WahaSessao.objects.filter(nome_sessao=nome_sessao, ativa=True).select_related(
-#         'empresa').first()
-#     if not sessao:
-#         return _erro('Sessão não encontrada.', 404)
-#
-#     assinatura = request.headers.get('X-Webhook-Signature', '')
-#     segredo = sessao.webhook_secret or getattr(settings, 'WAHA_WEBHOOK_SECRET', '')
-#     if segredo and not verificar_assinatura_webhook(request.body, assinatura, segredo):
-#         if getattr(settings, 'WAHA_WEBHOOK_VERIFICAR_ASSINATURA', True):
-#             return _erro('Assinatura inválida.', 403)
-#
-#     dados = _json_body(request)
-#     if dados is None:
-#         return _erro('JSON inválido.')
-#
-#     try:
-#         resultado = processar_webhook_waha(sessao, dados, request.body)
-#     except Exception:
-#         logger.exception('Erro ao processar webhook WAHA')
-#         return _erro('Erro interno.', 500)
-#     return JsonResponse(resultado)
+def _sessao_da_url(nome_sessao):
+    """Resolve a sessão WAHA (e portanto a empresa dona dela) pelo nome na URL."""
+    return WahaSessao.objects.filter(
+        nome_sessao=nome_sessao, ativa=True
+    ).select_related('empresa').first()
 
-# integracao/views.py
 
-import json
-import logging
-import traceback
-from django.http import JsonResponse
-from django.views.decorators.csrf import csrf_exempt
-from django.views.decorators.http import require_http_methods
-from django.contrib.auth.decorators import login_not_required
+def _assinatura_valida(request, sessao):
+    """Valida o HMAC do webhook quando há segredo configurado."""
+    segredo = sessao.webhook_secret or getattr(settings, 'WAHA_WEBHOOK_SECRET', '')
+    if not segredo:
+        return True
+    assinatura = request.headers.get('X-Webhook-Hmac') or request.headers.get(
+        'X-Webhook-Signature', '')
+    if verificar_assinatura_webhook(request.body, assinatura, segredo):
+        return True
+    # Sem a flag ligada a assinatura é apenas observada, para não derrubar
+    # ambientes onde o WAHA ainda não está configurado para assinar.
+    if getattr(settings, 'WAHA_WEBHOOK_VERIFICAR_ASSINATURA', False):
+        return False
+    logger.warning('Webhook da sessão %s sem assinatura válida (apenas aviso).',
+                   sessao.nome_sessao)
+    return True
 
-from empresas.models import Empresa
-from atendimento.models import Contato, Conversa, Mensagem, Tarefa, Servico
 
-logger = logging.getLogger(__name__)
+def _registrar_status_sessao(sessao, novo_status):
+    """Persiste o status empurrado pelo WAHA, evitando consultá-lo depois."""
+    if not novo_status or novo_status == sessao.status:
+        return
+    sessao.status = novo_status
+    sessao.status_atualizado_em = timezone.now()
+    sessao.save(update_fields=['status', 'status_atualizado_em', 'atualizada_em'])
+    logger.info('Sessão %s mudou para %s.', sessao.nome_sessao, novo_status)
+
+
+def _garantir_tarefa(empresa, conversa_id):
+    """
+    Cria a tarefa no Kanban para a conversa, se ela ainda não tiver uma aberta.
+    Evita uma tarefa nova a cada mensagem do mesmo atendimento.
+    """
+    ja_existe = Tarefa.objects.filter(
+        empresa=empresa,
+        conversa_id=conversa_id,
+        status__in=[Tarefa.Status.ABERTA, Tarefa.Status.EM_ATENDIMENTO],
+    ).exists()
+    if ja_existe:
+        return None
+    return criar_tarefa(empresa, conversa_id, origem=Tarefa.Origem.FLUXO_COMPLETO)
 
 
 @login_not_required
 @csrf_exempt
-@require_http_methods(["POST"])
+@require_http_methods(['POST'])
 def webhook_waha(request, sessao=None):
     """
-    Endpoint de recepção do webhook WAHA.
-    URL: /api/v1/integracao/webhooks/waha/piloto/
+    Ponto único de entrada dos webhooks do WAHA.
+
+    URL: /api/v1/integracao/webhooks/waha/<nome_sessao>/
+
+    A empresa é sempre resolvida pela sessão que recebeu o evento, e o
+    processamento é idempotente: o WAHA reentrega o mesmo evento quando não
+    recebe 2xx, e isso não pode gerar mensagens nem tarefas duplicadas.
     """
+    sessao_obj = _sessao_da_url(sessao)
+    if not sessao_obj or not sessao_obj.empresa.ativa:
+        logger.warning('Sessão WAHA desconhecida ou inativa: %s', sessao)
+        return _erro('Sessão não encontrada.', 404)
+
+    if not _assinatura_valida(request, sessao_obj):
+        return _erro('Assinatura inválida.', 403)
+
+    corpo = _json_body(request)
+    if corpo is None:
+        return _erro('JSON inválido.')
+
+    evento = corpo.get('event', '')
+    empresa = sessao_obj.empresa
+
+    # Eventos de ciclo de vida da sessão: guardam o status para a interface
+    # saber se precisa pedir QR Code, sem perguntar ao WAHA a cada segundo.
+    if evento == 'session.status':
+        novo_status = (corpo.get('payload') or {}).get('status', '')
+        _registrar_status_sessao(sessao_obj, novo_status)
+        return JsonResponse({'status': 'ok', 'sessao_status': sessao_obj.status})
+
     try:
-        body = json.loads(request.body or '{}')
-    except json.JSONDecodeError:
-        return JsonResponse({'status': 'invalid json'}, status=400)
+        resultado = processar_webhook_waha(sessao_obj, corpo, request.body)
+    except Exception:
+        logger.exception('Erro ao processar webhook WAHA da sessão %s', sessao)
+        return _erro('Erro interno.', 500)
 
-    print("\n📩 [WEBHOOK WAHA RECEBIDO]")
+    # Mensagem nova de um cliente: garante o card no Kanban.
+    if resultado.get('status') == 'ok' and resultado.get('conversa_id'):
+        tarefa = _garantir_tarefa(empresa, resultado['conversa_id'])
+        if tarefa:
+            resultado['tarefa_id'] = str(tarefa.id)
 
-    payload = body.get('payload', {})
-    raw_from = payload.get('from', '')
-    wa_id = raw_from.split('@')[0] if '@' in raw_from else raw_from
-    msg_id = payload.get('id')
-    text_body = payload.get('body', '')
-    cliente_nome = payload.get('_data', {}).get('notifyName', f'Cliente {wa_id[-4:]}')
-
-    if not wa_id or not text_body:
-        return JsonResponse({'status': 'dados incompletos'}, status=400)
-
-    try:
-        # Busca a Empresa ID 3 (Despachante do arrozDoce)
-        empresa = Empresa.objects.filter(id=3, ativa=True).first()
-        if not empresa:
-            print("❌ Erro: Empresa ID 3 não encontrada.")
-            return JsonResponse({'error': 'Empresa não encontrada'}, status=404)
-
-        # 1. Contato
-        contato, _ = Contato.objects.get_or_create(
-            empresa=empresa,
-            wa_id=wa_id,
-            defaults={'nome': cliente_nome}
-        )
-
-        # 2. Conversa
-        conversa, _ = Conversa.objects.get_or_create(
-            empresa=empresa,
-            contato=contato,
-            defaults={'estado': 'triagem'}
-        )
-
-        # 3. Mensagem
-        Mensagem.objects.create(
-            empresa=empresa,
-            conversa=conversa,
-            direcao='entrada',
-            conteudo=text_body,
-            wa_message_id=msg_id
-        )
-
-        # 4. Serviço
-        servico, _ = Servico.objects.get_or_create(
-            empresa=empresa,
-            nome="Atendimento Despachante",
-            defaults={'ativo': True}
-        )
-
-        # 5. Tarefa no Kanban
-        # Tenta obter o status inicial com fallback seguro
-        status_inicial = getattr(Tarefa, 'Status', None)
-        status_valor = 'aberta'
-        if status_inicial and hasattr(status_inicial, 'choices'):
-            status_valor = status_inicial.choices[0][0]
-
-        tarefa = Tarefa.objects.filter(empresa=empresa, conversa=conversa).first()
-        criada = False
-
-        if not tarefa:
-            tarefa = Tarefa.objects.create(
-                empresa=empresa,
-                contato=contato,
-                conversa=conversa,
-                servico=servico,
-                status=status_valor,
-                origem='fluxo_completo',
-            )
-            criada = True
-
-        print(f"🚀 [KANBAN SUCESSO] Tarefa #{tarefa.id} processada com sucesso!")
-
-        return JsonResponse({
-            'status': 'sucesso',
-            'empresa': empresa.nome,
-            'tarefa_id': tarefa.id,
-            'criada': criada
-        })
-
-    except Exception as e:
-        print("\n❌ [ERRO NO WEBHOOK WAHA]:")
-        traceback.print_exc()
-        return JsonResponse({'status': 'erro interno', 'detalhe': str(e)}, status=500)
+    return JsonResponse(resultado)

@@ -25,6 +25,14 @@ DEBUG = os.environ.get('DJANGO_DEBUG') == '1'
 
 ALLOWED_HOSTS = ['despachante.kingdomtech.com.br', 'localhost', '127.0.0.1']
 
+# Hosts extras por ambiente, separados por vírgula. Em desenvolvimento o WAHA
+# roda em container e entrega os webhooks em 'host.docker.internal:8000'.
+ALLOWED_HOSTS += [
+    host.strip()
+    for host in os.environ.get('DJANGO_ALLOWED_HOSTS_EXTRA', '').split(',')
+    if host.strip()
+]
+
 CSRF_TRUSTED_ORIGINS = ['https://despachante.kingdomtech.com.br']
 
 # O cloudflared termina o TLS e repassa em HTTP para a 8001
@@ -206,6 +214,7 @@ UPLOAD_MAX_FILE_SIZE = 30 * 1024 * 1024
 UPLOAD_MAX_TOTAL_SIZE = 200 * 1024 * 1024
 
 # Integração (fases 4–8): API interna, WAHA e webhooks
+SITE_URL = os.environ.get('SITE_URL', 'https://despachante.kingdomtech.com.br')
 INTEGRACAO_API_TOKEN = os.environ.get('INTEGRACAO_API_TOKEN', '')
 WAHA_BASE_URL = os.environ.get('WAHA_BASE_URL', 'http://localhost:3000')
 WAHA_API_KEY = os.environ.get('WAHA_API_KEY', '')
