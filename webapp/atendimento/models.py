@@ -8,6 +8,10 @@ class Contato(models.Model):
     # Identificador do WhatsApp: pode ser o telefone ou um LID (contas novas),
     # por isso o número em si fica no campo 'telefone' quando o WAHA o informa.
     wa_id = models.CharField(max_length=20)
+    # Endereço de chat completo informado pelo WAHA ('...@c.us' ou '...@lid').
+    # É o destino real de envio: remontá-lo a partir do wa_id levaria um LID
+    # para '@c.us', que é um endereço inexistente.
+    chat_id = models.CharField(max_length=64, blank=True)
     telefone = models.CharField(max_length=20, blank=True)
     nome = models.CharField(max_length=255, blank=True)
     criado_em = models.DateTimeField(auto_now_add=True)
@@ -72,6 +76,9 @@ class Conversa(models.Model):
     servico = models.ForeignKey(Servico, null=True, blank=True, on_delete=models.SET_NULL)
     estado = models.CharField(max_length=30, choices=Estado.choices, default=Estado.TRIAGEM)
     modo = models.CharField(max_length=10, choices=Modo.choices, default=Modo.BOT)
+    # Respostas seguidas que o menu do bot não reconheceu. Zera a cada acerto e,
+    # ao estourar o limite, a conversa é transferida para um atendente.
+    tentativas_invalidas = models.PositiveSmallIntegerField(default=0)
     criada_em = models.DateTimeField(auto_now_add=True)
     atualizada_em = models.DateTimeField(auto_now=True)
 

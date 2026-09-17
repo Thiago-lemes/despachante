@@ -1,3 +1,7 @@
+from datetime import timedelta
+
+from django.utils import timezone
+
 from atendimento.models import Contato, Conversa, Mensagem, Servico, Tarefa
 
 from integracao.models import EventoAtendimento
@@ -13,6 +17,21 @@ ESTADOS_ATIVOS = [
     if estado != Conversa.Estado.ENCERRADA
 ]
 
+# Conversa parada por dois dias é assunto encerrado: a próxima mensagem começa
+# um atendimento novo, em vez de retomar um menu de anteontem.
+HORAS_ATE_EXPIRAR = 48
+
+
+def _expirou(conversa):
+    """
+    Só expira conversa que ainda está com o bot. Atendimento já nas mãos de uma
+    pessoa não pode ser encerrado por silêncio do cliente.
+    """
+    if conversa.modo != Conversa.Modo.BOT:
+        return False
+    limite = timezone.now() - timedelta(hours=HORAS_ATE_EXPIRAR)
+    return conversa.atualizada_em < limite
+
 
 def obter_ou_criar_conversa(empresa, contato, servico=None):
     conversa = Conversa.objects.filter(
@@ -20,6 +39,10 @@ def obter_ou_criar_conversa(empresa, contato, servico=None):
         contato=contato,
         estado__in=ESTADOS_ATIVOS,
     ).order_by('-atualizada_em').first()
+    if conversa and _expirou(conversa):
+        conversa.estado = Conversa.Estado.ENCERRADA
+        conversa.save(update_fields=['estado', 'atualizada_em'])
+        conversa = None
     if conversa:
         return conversa, False
     conversa = Conversa.objects.create(
@@ -33,8 +56,8 @@ def obter_ou_criar_conversa(empresa, contato, servico=None):
 
 
 def registrar_mensagem_entrada(empresa, *, wa_id, conteudo, wa_message_id='',
-                               nome_contato='', telefone='', conversa_id=None,
-                               ator='waha'):
+                               nome_contato='', telefone='', chat_id='',
+                               conversa_id=None, ator='waha'):
     if wa_message_id:
         existente = Mensagem.objects.filter(
             empresa=empresa, wa_message_id=wa_message_id).first()
@@ -43,9 +66,13 @@ def registrar_mensagem_entrada(empresa, *, wa_id, conteudo, wa_message_id='',
 
     contato, _ = Contato.objects.get_or_create(
         empresa=empresa, wa_id=wa_id,
-        defaults={'nome': nome_contato or '', 'telefone': telefone or ''},
+        defaults={
+            'nome': nome_contato or '',
+            'telefone': telefone or '',
+            'chat_id': chat_id or '',
+        },
     )
-    # Nome e telefone podem chegar só em mensagens posteriores.
+    # Nome, telefone e chat_id podem chegar só em mensagens posteriores.
     campos = []
     if nome_contato and contato.nome != nome_contato:
         contato.nome = nome_contato
@@ -53,6 +80,9 @@ def registrar_mensagem_entrada(empresa, *, wa_id, conteudo, wa_message_id='',
     if telefone and not contato.telefone:
         contato.telefone = telefone
         campos.append('telefone')
+    if chat_id and contato.chat_id != chat_id:
+        contato.chat_id = chat_id
+        campos.append('chat_id')
     if campos:
         contato.save(update_fields=campos)
 
@@ -127,7 +157,8 @@ def atualizar_conversa(empresa, conversa_id, *, estado=None, modo=None, servico_
     return conversa
 
 
-def criar_tarefa(empresa, conversa_id, *, resumo_triagem='', origem='fluxo_completo'):
+def criar_tarefa(empresa, conversa_id, *, resumo_triagem='', origem='fluxo_completo',
+                 assumir_por_humano=True):
     conversa = obter_conversa(empresa, conversa_id)
     if not conversa:
         return None
@@ -151,9 +182,12 @@ def criar_tarefa(empresa, conversa_id, *, resumo_triagem='', origem='fluxo_compl
         resumo_triagem=resumo,
         status=Tarefa.Status.ABERTA,
     )
-    conversa.estado = Conversa.Estado.AGUARDANDO_HUMANO
-    conversa.modo = Conversa.Modo.HUMANO
-    conversa.save(update_fields=['estado', 'modo', 'atualizada_em'])
+    # O bot cria o card assim que o serviço é escolhido e segue conduzindo a
+    # coleta de documentos — nesse caso a conversa ainda não passa para humano.
+    if assumir_por_humano:
+        conversa.estado = Conversa.Estado.AGUARDANDO_HUMANO
+        conversa.modo = Conversa.Modo.HUMANO
+        conversa.save(update_fields=['estado', 'modo', 'atualizada_em'])
     registrar_evento(
         empresa, EventoAtendimento.Tipo.TAREFA_CRIADA,
         conversa=conversa, ator='n8n',

@@ -1,7 +1,7 @@
 import json
 import logging
 
-from atendimento.models import DocumentoRecebido, Tarefa
+from atendimento.models import DocumentoRecebido
 from django.conf import settings
 from django.contrib.auth.decorators import login_not_required
 from django.http import JsonResponse
@@ -61,6 +61,7 @@ def sessao_health(request, nome_sessao):
 
 
 @login_not_required
+@api_empresa_required
 @csrf_exempt
 @require_http_methods(['POST'])
 def mensagens_ingest(request):
@@ -274,21 +275,6 @@ def _registrar_status_sessao(sessao, novo_status):
     logger.info('Sessão %s mudou para %s.', sessao.nome_sessao, novo_status)
 
 
-def _garantir_tarefa(empresa, conversa_id):
-    """
-    Cria a tarefa no Kanban para a conversa, se ela ainda não tiver uma aberta.
-    Evita uma tarefa nova a cada mensagem do mesmo atendimento.
-    """
-    ja_existe = Tarefa.objects.filter(
-        empresa=empresa,
-        conversa_id=conversa_id,
-        status__in=[Tarefa.Status.ABERTA, Tarefa.Status.EM_ATENDIMENTO],
-    ).exists()
-    if ja_existe:
-        return None
-    return criar_tarefa(empresa, conversa_id, origem=Tarefa.Origem.FLUXO_COMPLETO)
-
-
 @login_not_required
 @csrf_exempt
 @require_http_methods(['POST'])
@@ -315,7 +301,6 @@ def webhook_waha(request, sessao=None):
         return _erro('JSON inválido.')
 
     evento = corpo.get('event', '')
-    empresa = sessao_obj.empresa
 
     # Eventos de ciclo de vida da sessão: guardam o status para a interface
     # saber se precisa pedir QR Code, sem perguntar ao WAHA a cada segundo.
@@ -324,16 +309,12 @@ def webhook_waha(request, sessao=None):
         _registrar_status_sessao(sessao_obj, novo_status)
         return JsonResponse({'status': 'ok', 'sessao_status': sessao_obj.status})
 
+    # Registrar a mensagem e responder ao cliente acontecem aqui dentro: o card
+    # do Kanban nasce quando o bot caracteriza o pedido, não no primeiro "Oi".
     try:
         resultado = processar_webhook_waha(sessao_obj, corpo, request.body)
     except Exception:
         logger.exception('Erro ao processar webhook WAHA da sessão %s', sessao)
         return _erro('Erro interno.', 500)
-
-    # Mensagem nova de um cliente: garante o card no Kanban.
-    if resultado.get('status') == 'ok' and resultado.get('conversa_id'):
-        tarefa = _garantir_tarefa(empresa, resultado['conversa_id'])
-        if tarefa:
-            resultado['tarefa_id'] = str(tarefa.id)
 
     return JsonResponse(resultado)

@@ -1,7 +1,6 @@
 from django.core.management.base import BaseCommand
 from django.db import transaction
 from atendimento.models import Conversa
-from atendimento.services import processar_triagem, processar_coleta_documentos
 from integracao.services.documentos import analisar_documento_recebido
 import logging
 import time
@@ -10,10 +9,21 @@ logger = logging.getLogger(__name__)
 
 
 class Command(BaseCommand):
-    help = 'Processa conversas em fila: triagem, coleta de docs, criação de tarefa'
+    """
+    Worker de análise de documentos.
+
+    Triagem e coleta não passam mais por aqui: o bot roda por evento, dentro do
+    webhook do WAHA. Varrer conversas para conversar com o cliente respondia a
+    mesma mensagem a cada ciclo, porque nada registrava o que já fora
+    respondido. A análise de documento continua no worker por ser cara (OCR/IA)
+    e por poder repetir sem efeito visível para o cliente.
+    """
+
+    help = 'Analisa documentos das conversas em "aguardando_analise"'
 
     def add_arguments(self, parser):
-        parser.add_argument('--once', action='store_true', help='Processa uma conversa e sai')
+        parser.add_argument('--once', action='store_true',
+                            help='Processa uma conversa e sai')
 
     def handle(self, *args, **options):
         if options['once']:
@@ -22,28 +32,17 @@ class Command(BaseCommand):
             self.processar_loop()
 
     def processar_uma(self):
-        """Reivindica uma conversa e processa"""
         with transaction.atomic():
-            # Select for update: garante que dois workers não peguem a mesma conversa
+            # select_for_update: dois workers não pegam a mesma conversa.
             conversas_pendentes = Conversa.objects.filter(
-                modo='bot',
-                estado__in=['triagem', 'coletando_documentos', 'aguardando_analise']
+                estado=Conversa.Estado.AGUARDANDO_ANALISE
             ).select_for_update(skip_locked=True)[:1]
 
             if not conversas_pendentes:
-                logger.info("Nenhuma conversa pendente")
+                logger.info('Nenhuma conversa aguardando análise')
                 return
 
-            conversa = conversas_pendentes[0]
-            logger.info(f"Processando conversa {conversa.id}")
-
-            # Orquestar handlers
-            if conversa.estado == 'triagem':
-                processar_triagem(conversa)
-            elif conversa.estado == 'coletando_documentos':
-                processar_coleta_documentos(conversa)
-            elif conversa.estado == 'aguardando_analise':
-                self.processar_analise(conversa)
+            self.processar_analise(conversas_pendentes[0])
 
     def processar_analise(self, conversa):
         doc = conversa.documentos_recebidos.filter(
@@ -55,12 +54,11 @@ class Command(BaseCommand):
         analisar_documento_recebido(doc)
         pendentes = conversa.documentos_recebidos.filter(analisado_em__isnull=True).exists()
         if not pendentes:
-            conversa.estado = 'coletando_documentos'
+            conversa.estado = Conversa.Estado.COLETANDO_DOCUMENTOS
             conversa.save(update_fields=['estado', 'atualizada_em'])
 
     def processar_loop(self):
-        """Loop infinito processando conversas"""
-        self.stdout.write("Worker iniciado. Processando conversas...")
+        self.stdout.write('Worker de análise iniciado.')
         while True:
             self.processar_uma()
             time.sleep(2)

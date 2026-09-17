@@ -211,11 +211,24 @@ class PipelineTests(TestCase):
 
 
 class CadastroTests(TestCase):
+    """Aba 'Sou a empresa'. O fluxo completo das duas abas está em usuario/tests.py."""
+
+    def dados(self, **extra):
+        base = {
+            'aba': 'empresa',
+            'nome_empresa': 'Despachante Diego',
+            'cnpj': '11222333000181',
+            'first_name': 'Diego',
+            'username': 'diego',
+            'email': 'diego@example.com',
+            'password1': 'uma-senha-bem-forte-123',
+            'password2': 'uma-senha-bem-forte-123',
+        }
+        base.update(extra)
+        return base
+
     def test_cria_conta_e_loga_automaticamente(self):
-        resposta = self.client.post(reverse('cadastro'), {
-            'username': 'diego', 'email': 'diego@example.com',
-            'password1': 'uma-senha-bem-forte-123', 'password2': 'uma-senha-bem-forte-123',
-        })
+        resposta = self.client.post(reverse('cadastro'), self.dados())
         self.assertRedirects(resposta, reverse('busca'))
         usuario = get_user_model().objects.get(username='diego')
         self.assertEqual(usuario.email, 'diego@example.com')
@@ -224,10 +237,8 @@ class CadastroTests(TestCase):
 
     def test_email_duplicado_e_rejeitado(self):
         get_user_model().objects.create_user('existente', 'usado@example.com', 'senha-antiga')
-        resposta = self.client.post(reverse('cadastro'), {
-            'username': 'novo', 'email': 'usado@example.com',
-            'password1': 'uma-senha-bem-forte-123', 'password2': 'uma-senha-bem-forte-123',
-        })
+        resposta = self.client.post(
+            reverse('cadastro'), self.dados(username='novo', email='usado@example.com'))
         self.assertEqual(resposta.status_code, 200)
         self.assertFalse(get_user_model().objects.filter(username='novo').exists())
 

@@ -1,70 +1,234 @@
 {% extends 'documentos/base.html' %}
+{% load static %}
+{% block titulo %}Criar conta{% endblock %}
 {% block auth_conteudo %}
-<div class="flex min-h-screen items-center justify-center bg-slate-50 p-4">
-    <div class="w-full max-w-md rounded-xl bg-white p-8 shadow-lg">
-        <div class="mb-6 text-center">
-            <h2 class="text-2xl font-bold text-slate-900">Criar conta</h2>
-            <p class="mt-1 text-sm text-slate-500">Informe seus dados e o CNPJ da empresa</p>
+<div class="min-h-screen bg-slate-50">
+    {# Logo no canto superior esquerdo, como o LinkedIn faz nas telas de conta. #}
+    <header class="px-6 py-5">
+        <a href="{% url 'login' %}" class="inline-flex items-center gap-2.5">
+            <img class="h-9 w-9 rounded object-cover" src="{% static 'documentos/logo.png' %}" alt="Kingdom Tech">
+            <span class="font-display text-lg font-bold text-slate-900">Despachante</span>
+        </a>
+    </header>
+
+    <div class="flex justify-center px-4 pb-12">
+        <div class="w-full max-w-md rounded-xl bg-white p-8 shadow-lg">
+            <div class="mb-6 text-center">
+                <h2 class="text-2xl font-bold text-slate-900">Criar conta</h2>
+                <p class="mt-1 text-sm text-slate-500">Cadastre sua empresa ou entre em uma já existente</p>
+            </div>
+
+            <div class="mb-6 grid grid-cols-2 gap-1 rounded-lg bg-slate-100 p-1" role="tablist">
+                <button type="button" role="tab" data-aba-botao="empresa"
+                        class="rounded-md px-3 py-2 text-sm font-semibold transition">
+                    Sou a empresa
+                </button>
+                <button type="button" role="tab" data-aba-botao="funcionario"
+                        class="rounded-md px-3 py-2 text-sm font-semibold transition">
+                    Sou funcionário
+                </button>
+            </div>
+
+            {# ---------------------------- Aba: empresa ---------------------------- #}
+            <section data-aba-painel="empresa" hidden>
+                <p class="mb-4 rounded bg-slate-50 p-3 text-xs text-slate-600">
+                    Você cria a empresa e fica como <strong>administrador</strong> dela.
+                    Seus funcionários se cadastram depois pela outra aba, usando o CNPJ.
+                </p>
+
+                <form method="post" class="space-y-4">
+                    {% csrf_token %}
+                    <input type="hidden" name="aba" value="empresa">
+
+                    <div>
+                        <label class="mb-1 block text-sm font-medium text-slate-700"
+                               for="{{ form_empresa.nome_empresa.id_for_label }}">Nome da empresa</label>
+                        {{ form_empresa.nome_empresa }}
+                    </div>
+
+                    <div>
+                        <label class="mb-1 block text-sm font-medium text-slate-700"
+                               for="{{ form_empresa.cnpj.id_for_label }}">CNPJ da empresa</label>
+                        {{ form_empresa.cnpj }}
+                    </div>
+
+                    <div>
+                        <label class="mb-1 block text-sm font-medium text-slate-700"
+                               for="{{ form_empresa.first_name.id_for_label }}">Nome</label>
+                        {{ form_empresa.first_name }}
+                    </div>
+
+                    <div>
+                        <label class="mb-1 block text-sm font-medium text-slate-700"
+                               for="{{ form_empresa.last_name.id_for_label }}">Sobrenome</label>
+                        {{ form_empresa.last_name }}
+                    </div>
+
+                    <div>
+                        <label class="mb-1 block text-sm font-medium text-slate-700"
+                               for="{{ form_empresa.email.id_for_label }}">E-mail</label>
+                        {{ form_empresa.email }}
+                    </div>
+
+                    <div>
+                        <label class="mb-1 block text-sm font-medium text-slate-700"
+                               for="{{ form_empresa.username.id_for_label }}">Usuário</label>
+                        {{ form_empresa.username }}
+                    </div>
+
+                    <div>
+                        <label class="mb-1 block text-sm font-medium text-slate-700"
+                               for="{{ form_empresa.password1.id_for_label }}">Senha</label>
+                        {{ form_empresa.password1 }}
+                    </div>
+
+                    <div>
+                        <label class="mb-1 block text-sm font-medium text-slate-700"
+                               for="{{ form_empresa.password2.id_for_label }}">Confirmar senha</label>
+                        {{ form_empresa.password2 }}
+                    </div>
+
+                    {% if form_empresa.errors %}
+                    <div class="rounded bg-red-50 p-3 text-sm text-red-700">
+                        {% for field, errors in form_empresa.errors.items %}
+                        {% for error in errors %}
+                        <p>• {{ error }}</p>
+                        {% endfor %}
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+
+                    <button type="submit"
+                            class="w-full rounded-lg bg-kingdom py-2.5 font-semibold text-white hover:bg-green-700">
+                        Cadastrar empresa
+                    </button>
+                </form>
+            </section>
+
+            {# -------------------------- Aba: funcionário -------------------------- #}
+            <section data-aba-painel="funcionario" hidden>
+                <p class="mb-4 rounded bg-slate-50 p-3 text-xs text-slate-600">
+                    Informe o CNPJ da empresa em que você trabalha. O acesso é liberado
+                    depois que um <strong>administrador</strong> dela aprovar seu cadastro.
+                </p>
+
+                <form method="post" class="space-y-4">
+                    {% csrf_token %}
+                    <input type="hidden" name="aba" value="funcionario">
+
+                    <div>
+                        <label class="mb-1 block text-sm font-medium text-slate-700"
+                               for="{{ form_funcionario.cnpj.id_for_label }}">CNPJ da empresa</label>
+                        {{ form_funcionario.cnpj }}
+                        <p class="mt-1 text-xs text-slate-500">A empresa já precisa estar cadastrada no sistema.</p>
+                    </div>
+
+                    <div>
+                        <label class="mb-1 block text-sm font-medium text-slate-700"
+                               for="{{ form_funcionario.first_name.id_for_label }}">Nome</label>
+                        {{ form_funcionario.first_name }}
+                    </div>
+
+                    <div>
+                        <label class="mb-1 block text-sm font-medium text-slate-700"
+                               for="{{ form_funcionario.last_name.id_for_label }}">Sobrenome</label>
+                        {{ form_funcionario.last_name }}
+                    </div>
+
+                    <div>
+                        <label class="mb-1 block text-sm font-medium text-slate-700"
+                               for="{{ form_funcionario.email.id_for_label }}">E-mail</label>
+                        {{ form_funcionario.email }}
+                    </div>
+
+                    <div>
+                        <label class="mb-1 block text-sm font-medium text-slate-700"
+                               for="{{ form_funcionario.username.id_for_label }}">Usuário</label>
+                        {{ form_funcionario.username }}
+                    </div>
+
+                    <div>
+                        <label class="mb-1 block text-sm font-medium text-slate-700"
+                               for="{{ form_funcionario.password1.id_for_label }}">Senha</label>
+                        {{ form_funcionario.password1 }}
+                    </div>
+
+                    <div>
+                        <label class="mb-1 block text-sm font-medium text-slate-700"
+                               for="{{ form_funcionario.password2.id_for_label }}">Confirmar senha</label>
+                        {{ form_funcionario.password2 }}
+                    </div>
+
+                    {% if form_funcionario.errors %}
+                    <div class="rounded bg-red-50 p-3 text-sm text-red-700">
+                        {% for field, errors in form_funcionario.errors.items %}
+                        {% for error in errors %}
+                        <p>• {{ error }}</p>
+                        {% endfor %}
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+
+                    <button type="submit"
+                            class="w-full rounded-lg bg-kingdom py-2.5 font-semibold text-white hover:bg-green-700">
+                        Solicitar acesso
+                    </button>
+                </form>
+            </section>
+
+            <p class="mt-4 text-center text-sm text-slate-600">
+                Já tem conta? <a href="{% url 'login' %}" class="text-kingdom hover:underline">Entrar</a>
+            </p>
         </div>
-
-        <form method="post" class="space-y-4">
-            {% csrf_token %}
-
-            <div>
-                <label class="mb-1 block text-sm font-medium text-slate-700">Nome</label>
-                {{ form.first_name }}
-            </div>
-
-            <div>
-                <label class="mb-1 block text-sm font-medium text-slate-700">Sobrenome</label>
-                {{ form.last_name }}
-            </div>
-
-            <div>
-                <label class="mb-1 block text-sm font-medium text-slate-700">E-mail</label>
-                {{ form.email }}
-            </div>
-
-            <div>
-                <label class="mb-1 block text-sm font-medium text-slate-700">Usuário</label>
-                {{ form.username }}
-            </div>
-
-            <div>
-                <label class="mb-1 block text-sm font-medium text-slate-700">CNPJ da empresa</label>
-                {{ form.cnpj }}
-                <p class="mt-1 text-xs text-slate-500">Se o CNPJ já existir, você será vinculado como funcionário</p>
-            </div>
-
-            <div>
-                <label class="mb-1 block text-sm font-medium text-slate-700">Senha</label>
-                {{ form.password1 }}
-            </div>
-
-            <div>
-                <label class="mb-1 block text-sm font-medium text-slate-700">Confirmar senha</label>
-                {{ form.password2 }}
-            </div>
-
-            {% if form.errors %}
-            <div class="rounded bg-red-50 p-3 text-sm text-red-700">
-                {% for field, errors in form.errors.items %}
-                {% for error in errors %}
-                <p>• {{ error }}</p>
-                {% endfor %}
-                {% endfor %}
-            </div>
-            {% endif %}
-
-            <button type="submit"
-                    class="w-full rounded-lg bg-kingdom py-2.5 font-semibold text-white hover:bg-kingdom-dark">
-                Cadastrar
-            </button>
-        </form>
-
-        <p class="mt-4 text-center text-sm text-slate-600">
-            Já tem conta? <a href="{% url 'login' %}" class="text-kingdom hover:underline">Entrar</a>
-        </p>
     </div>
 </div>
+
+<script>
+    (function () {
+        // A aba inicial vem do servidor: num POST inválido, o usuário volta para
+        // a aba que ele mesmo enviou, com os erros daquele formulário.
+        const abaInicial = '{{ aba }}';
+        const botoes = document.querySelectorAll('[data-aba-botao]');
+        const paineis = document.querySelectorAll('[data-aba-painel]');
+
+        function selecionarAba(nome) {
+            botoes.forEach((botao) => {
+                const ativa = botao.dataset.abaBotao === nome;
+                botao.classList.toggle('bg-white', ativa);
+                botao.classList.toggle('text-slate-900', ativa);
+                botao.classList.toggle('shadow-sm', ativa);
+                botao.classList.toggle('text-slate-500', !ativa);
+                botao.setAttribute('aria-selected', ativa ? 'true' : 'false');
+            });
+            paineis.forEach((painel) => {
+                painel.hidden = painel.dataset.abaPainel !== nome;
+            });
+        }
+
+        botoes.forEach((botao) => {
+            botao.addEventListener('click', () => selecionarAba(botao.dataset.abaBotao));
+        });
+
+        selecionarAba(abaInicial);
+
+        // Máscara de CNPJ. O servidor aceita com ou sem pontuação, então isto é
+        // só conforto visual — nenhuma validação depende dela.
+        document.querySelectorAll('[data-mascara="cnpj"]').forEach((input) => {
+            input.addEventListener('input', () => {
+                const digitos = input.value.replace(/\D/g, '').slice(0, 14);
+                let saida = digitos;
+                if (digitos.length > 12) {
+                    saida = `${digitos.slice(0, 2)}.${digitos.slice(2, 5)}.${digitos.slice(5, 8)}/${digitos.slice(8, 12)}-${digitos.slice(12)}`;
+                } else if (digitos.length > 8) {
+                    saida = `${digitos.slice(0, 2)}.${digitos.slice(2, 5)}.${digitos.slice(5, 8)}/${digitos.slice(8)}`;
+                } else if (digitos.length > 5) {
+                    saida = `${digitos.slice(0, 2)}.${digitos.slice(2, 5)}.${digitos.slice(5)}`;
+                } else if (digitos.length > 2) {
+                    saida = `${digitos.slice(0, 2)}.${digitos.slice(2)}`;
+                }
+                input.value = saida;
+            });
+        });
+    })();
+</script>
 {% endblock %}

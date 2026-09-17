@@ -105,6 +105,23 @@
                     </svg>
                     Histórico
                 </a>
+                {% if request.empresa_vinculo.pode_administrar %}
+                <a class="nav-link {% if request.resolver_match.url_name == 'equipe' %}is-active{% endif %}"
+                   href="{% url 'equipe' %}">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                         aria-hidden="true">
+                        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                        <circle cx="9" cy="7" r="4"/>
+                        <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+                        <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+                    </svg>
+                    Equipe
+                    {% if request.empresa_aprovacoes_pendentes %}
+                        <span class="badge-working ml-auto">{{ request.empresa_aprovacoes_pendentes }}</span>
+                    {% endif %}
+                </a>
+                {% endif %}
+
                 <a class="nav-link {% if request.resolver_match.url_name == 'conta' %}is-active{% endif %}"
                    href="{% url 'conta' %}">
                     <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -269,6 +286,10 @@
     let waStatusAtual = null;
     let waQrCache = null;
     let waFalhasSeguidas = 0;
+    // A primeira checagem de cada carregamento de página só descobre o estado
+    // atual — não é uma transição. Sem isso, um simples refresh já dispararia o
+    // toast ("WhatsApp conectado com sucesso!") toda vez.
+    let waPrimeiraChecagem = true;
 
     function mostrarToast(mensagem, tipo) {
         const estilos = {
@@ -339,8 +360,9 @@
     }
 
     function aplicarStatusAutomatico(status, qrCode) {
-        const statusMudou = status !== waStatusAtual;
+        const statusMudou = status !== waStatusAtual && !waPrimeiraChecagem;
         waStatusAtual = status;
+        waPrimeiraChecagem = false;
         const modalAberto = document.getElementById('modal-qrcode').classList.contains('flex');
 
         if (status === 'conectado') {

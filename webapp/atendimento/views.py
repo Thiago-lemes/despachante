@@ -8,7 +8,7 @@ from django.shortcuts import render, get_object_or_404
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 from empresas.models import Empresa
-from .models import Tarefa, Servico
+from .models import Conversa, Tarefa, Servico
 
 register = template.Library()
 
@@ -132,6 +132,15 @@ def atualizar_status_tarefa(request):
         campos.append('concluida_em')
 
     tarefa.save(update_fields=campos)
+
+    # Assumir o card cala o bot naquela conversa. Devolver para "Aberta" não o
+    # religa: quem já foi atendido por uma pessoa não volta para a triagem
+    # automática no meio do assunto.
+    if novo_status != Tarefa.Status.ABERTA:
+        conversa = tarefa.conversa
+        if conversa.modo != Conversa.Modo.HUMANO:
+            conversa.modo = Conversa.Modo.HUMANO
+            conversa.save(update_fields=['modo', 'atualizada_em'])
 
     atendente = tarefa.atendente
     return JsonResponse({

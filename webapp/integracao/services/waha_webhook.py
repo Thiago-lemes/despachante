@@ -1,6 +1,9 @@
 import logging
 import re
 
+from atendimento.models import Conversa
+from atendimento.services.bot import processar_mensagem
+
 from integracao.models import WahaSessao
 from integracao.services.conversas import (
     processar_webhook_idempotente,
@@ -65,6 +68,29 @@ def _extrair_telefone(payload: dict, from_id: str) -> str:
     return ''
 
 
+def _e_do_proprio_sistema(payload: dict) -> bool:
+    """
+    Mensagem que o próprio número enviou. Sem esta verificação o bot responderia
+    à própria resposta — e o WAHA reentrega o eco conforme a configuração do
+    engine. É a primeira linha de defesa contra loop, e vale mesmo sem bot.
+    """
+    if payload.get('fromMe'):
+        return True
+    dados = payload.get('_data') if isinstance(payload.get('_data'), dict) else {}
+    chave = dados.get('key') if isinstance(dados.get('key'), dict) else {}
+    return bool(dados.get('fromMe') or chave.get('fromMe'))
+
+
+def _tem_midia(payload: dict) -> bool:
+    """Foto, PDF ou áudio anexado — é assim que o cliente envia documento."""
+    if payload.get('hasMedia'):
+        return True
+    if payload.get('mediaUrl') or payload.get('media'):
+        return True
+    mimetype = payload.get('mimetype') or ''
+    return bool(mimetype) and not mimetype.startswith('text/')
+
+
 def _extrair_mensagem_waha(corpo: dict):
     """Interpreta payloads comuns do WAHA (message / message.any)."""
     evento = corpo.get('event', '')
@@ -78,6 +104,9 @@ def _extrair_mensagem_waha(corpo: dict):
         payload = payload.get('payload') or payload
 
     if not isinstance(payload, dict):
+        return None
+
+    if _e_do_proprio_sistema(payload):
         return None
 
     from_id = payload.get('from') or payload.get('author') or ''
@@ -96,12 +125,14 @@ def _extrair_mensagem_waha(corpo: dict):
 
     return {
         'wa_id': wa_id,
+        'chat_id': from_id,
         'conteudo': str(texto),
         'wa_message_id': msg_id,
         'nome_contato': _extrair_nome(payload),
         'telefone': _extrair_telefone(payload, from_id),
         'tipo_midia': payload.get('mimetype') or payload.get('type') or 'text',
         'media_url': payload.get('mediaUrl') or payload.get('media') or '',
+        'tem_midia': _tem_midia(payload),
     }
 
 
@@ -116,7 +147,7 @@ def processar_webhook_waha(sessao: WahaSessao, corpo: dict, payload_bruto: bytes
         return {'status': 'duplicado', 'id': id_evento}
 
     mensagem = _extrair_mensagem_waha(corpo)
-    if not mensagem or not mensagem['conteudo']:
+    if not mensagem or not (mensagem['conteudo'] or mensagem['tem_midia']):
         registrar_evento(
             sessao.empresa, EventoAtendimento.Tipo.WEBHOOK_RECEBIDO,
             ator='waha', correlation_id=id_evento,
@@ -124,19 +155,40 @@ def processar_webhook_waha(sessao: WahaSessao, corpo: dict, payload_bruto: bytes
         )
         return {'status': 'ignorado', 'motivo': 'sem mensagem de texto'}
 
+    # Um anexo sem legenda não tem texto, mas é justamente como o cliente
+    # responde ao pedido de documento — precisa virar mensagem mesmo assim.
+    conteudo = mensagem['conteudo'] or '[arquivo enviado pelo cliente]'
+
     msg, criada = registrar_mensagem_entrada(
         sessao.empresa,
         wa_id=mensagem['wa_id'],
-        conteudo=mensagem['conteudo'],
+        conteudo=conteudo,
         wa_message_id=mensagem['wa_message_id'],
         nome_contato=mensagem['nome_contato'],
         telefone=mensagem['telefone'],
+        chat_id=mensagem['chat_id'],
         ator='waha',
     )
-    return {
+
+    resultado = {
         'status': 'ok',
         'mensagem_id': msg.id,
         'conversa_id': msg.conversa_id,
-        'conteudo': mensagem['conteudo'],
+        'conteudo': conteudo,
         'criada': criada,
     }
+
+    # O bot roda por evento, aqui. 'criada' garante que a reentrega do mesmo
+    # evento pelo WAHA não gere uma segunda resposta.
+    conversa = msg.conversa
+    if criada and conversa.modo == Conversa.Modo.BOT:
+        try:
+            resultado['bot_respondeu'] = processar_mensagem(
+                conversa, msg, tem_midia=mensagem['tem_midia'])
+        except Exception:
+            # Falha do bot não pode devolver erro ao WAHA: ele reentregaria o
+            # evento e a mensagem já está registrada.
+            logger.exception('Falha do bot na conversa %s', conversa.id)
+            resultado['bot_respondeu'] = False
+
+    return resultado

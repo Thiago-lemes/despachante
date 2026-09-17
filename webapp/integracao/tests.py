@@ -88,6 +88,54 @@ class IntegracaoApiTests(TestCase):
         self.assertEqual(resposta2.json()['status'], 'duplicado')
         self.assertEqual(WebhookRecebido.objects.count(), 1)
 
+    def _webhook(self, payload, evento='message'):
+        return self.client.post(
+            reverse('integracao_webhook_waha', args=['piloto']),
+            data=json.dumps({'event': evento, 'payload': payload}),
+            content_type='application/json',
+        )
+
+    def test_webhook_ignora_mensagem_do_proprio_sistema(self):
+        resposta = self._webhook({
+            'id': 'eco-1',
+            'from': '5511999999999@c.us',
+            'fromMe': True,
+            'body': 'Olá! Sou o assistente virtual...',
+        })
+        self.assertEqual(resposta.json()['status'], 'ignorado')
+        self.assertFalse(Conversa.objects.exists())
+
+    @patch('atendimento.services.bot.enviar_texto',
+           return_value={'success': True, 'data': {'id': 'out-1'}})
+    def test_primeira_mensagem_nao_cria_card(self, _enviar):
+        Servico.objects.create(empresa=self.empresa, nome='Licenciamento')
+        resposta = self._webhook({
+            'id': 'evt-oi',
+            'from': '5511999999999@c.us',
+            'body': 'Oi',
+        })
+        self.assertEqual(resposta.json()['status'], 'ok')
+        self.assertEqual(Tarefa.objects.count(), 0)
+
+    @patch('atendimento.services.bot.enviar_texto',
+           return_value={'success': True, 'data': {'id': 'out-1'}})
+    def test_escolha_do_servico_cria_card(self, _enviar):
+        Servico.objects.create(empresa=self.empresa, nome='Licenciamento')
+        self._webhook({'id': 'evt-oi', 'from': '5511999999999@c.us', 'body': 'Oi'})
+        self._webhook({'id': 'evt-1', 'from': '5511999999999@c.us', 'body': '1'})
+        self.assertEqual(Tarefa.objects.count(), 1)
+
+    @patch('atendimento.services.bot.enviar_texto',
+           return_value={'success': True, 'data': {'id': 'out-1'}})
+    def test_webhook_guarda_o_chat_id_do_lid(self, _enviar):
+        self._webhook({
+            'id': 'evt-lid',
+            'from': '127878373056719@lid',
+            'body': 'Oi',
+        })
+        self.assertEqual(
+            Contato.objects.get().chat_id, '127878373056719@lid')
+
     @patch('integracao.api.views.enviar_texto')
     def test_enviar_mensagem(self, mock_enviar):
         mock_enviar.return_value = {'success': True, 'data': {'id': 'out-1'}}

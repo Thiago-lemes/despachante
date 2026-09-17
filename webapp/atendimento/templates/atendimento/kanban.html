@@ -145,6 +145,11 @@
                                         {% if tarefa.servico %}
                                             <span class="badge bg-slate-100 text-slate-700">{{ tarefa.servico.nome }}</span>
                                         {% endif %}
+                                        {% if tarefa.conversa.modo == 'bot' %}
+                                            <span class="badge bg-amber-100 text-amber-800" title="O bot ainda está conduzindo esta conversa">
+                                                Bot: {{ tarefa.conversa.get_estado_display }}
+                                            </span>
+                                        {% endif %}
                                         {% if tarefa.conversa.documentos_recebidos.count %}
                                             <span class="badge-success">
                                                 {{ tarefa.conversa.documentos_recebidos.count }} doc{{ tarefa.conversa.documentos_recebidos.count|pluralize:"s" }}

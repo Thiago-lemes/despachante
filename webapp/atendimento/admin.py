@@ -10,10 +10,37 @@ class ContatoAdmin(EmpresaAdminMixin, admin.ModelAdmin):
     search_fields = ('wa_id', 'nome')
 
 
+class DocumentoExigidoInline(admin.TabularInline):
+    """
+    Os documentos são cadastrados junto do serviço: separados, é fácil criar o
+    serviço e esquecer a lista, e aí o bot não tem o que pedir.
+    """
+    model = DocumentoExigido
+    extra = 1
+    fields = ('tipo', 'obrigatorio', 'instrucoes')
+
+
 @admin.register(Servico)
 class ServicoAdmin(EmpresaAdminMixin, admin.ModelAdmin):
-    list_display = ('empresa', 'nome', 'ativo', 'criado_em')
+    list_display = ('empresa', 'nome', 'ativo', 'qtd_documentos', 'criado_em')
     list_filter = ('ativo',)
+    inlines = [DocumentoExigidoInline]
+
+    @admin.display(description='Documentos exigidos')
+    def qtd_documentos(self, servico):
+        return servico.documentos_exigidos.count()
+
+    def save_formset(self, request, form, formset, change):
+        """O documento herda a empresa do serviço — não é escolha do usuário."""
+        if formset.model is not DocumentoExigido:
+            return super().save_formset(request, form, formset, change)
+        documentos = formset.save(commit=False)
+        for documento in documentos:
+            documento.empresa = form.instance.empresa
+            documento.save()
+        for documento in formset.deleted_objects:
+            documento.delete()
+        formset.save_m2m()
 
 
 @admin.register(Conversa)
