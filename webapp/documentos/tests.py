@@ -10,6 +10,8 @@ from django.core.management import call_command
 from django.test import TestCase, override_settings
 from django.urls import reverse
 
+from empresas.models import Empresa, EmpresaUsuario
+
 from .forms import UploadForm
 from .models import Documento, Lote
 from .services import processar
@@ -30,12 +32,21 @@ def pdf(nome='documento.pdf', marcador=b'conteudo'):
         nome, b'%PDF-1.4\n' + marcador + b'\n%%EOF', content_type='application/pdf')
 
 
+def usuario_de(empresa, username, email=''):
+    """Usuário vinculado a uma empresa — as views escopam tudo por ela."""
+    usuario = get_user_model().objects.create_user(username, email, 'senha-segura')
+    EmpresaUsuario.objects.create(empresa=empresa, usuario=usuario, ativo=True)
+    return usuario
+
+
 @override_settings(MEDIA_ROOT=TEST_MEDIA_ROOT, STORAGES=TEST_STORAGES)
 class UploadEPermissoesTests(TestCase):
     def setUp(self):
-        User = get_user_model()
-        self.usuario = User.objects.create_user('ana', 'ana@example.com', 'senha-segura')
-        self.outro = User.objects.create_user('bia', 'bia@example.com', 'senha-segura')
+        self.empresa = Empresa.objects.create(nome='Despachante Alfa')
+        self.outra_empresa = Empresa.objects.create(nome='Despachante Beta')
+        self.usuario = usuario_de(self.empresa, 'ana', 'ana@example.com')
+        self.colega = usuario_de(self.empresa, 'bruno', 'bruno@example.com')
+        self.outro = usuario_de(self.outra_empresa, 'bia', 'bia@example.com')
         self.client.force_login(self.usuario)
 
     def test_upload_avulso_entra_na_fila_gemini(self):
@@ -72,31 +83,43 @@ class UploadEPermissoesTests(TestCase):
         })
         self.assertEqual(Documento.objects.count(), 2)
 
-    def test_usuario_nao_acessa_documento_de_terceiro(self):
+    def test_usuario_nao_acessa_documento_de_outra_empresa(self):
         documento = Documento.objects.create(
-            arquivo=pdf(), enviado_por=self.outro, status='concluido')
+            arquivo=pdf(), empresa=self.outra_empresa, enviado_por=self.outro,
+            status='concluido')
         for nome in ('detalhe', 'arquivo'):
             resposta = self.client.get(reverse(nome, args=[documento.pk]))
             self.assertEqual(resposta.status_code, 404)
 
+    def test_colega_da_mesma_empresa_acessa_o_documento(self):
+        """O acervo é da empresa, não de quem enviou: a equipe compartilha."""
+        documento = Documento.objects.create(
+            arquivo=pdf(), empresa=self.empresa, enviado_por=self.colega,
+            status='concluido')
+        resposta = self.client.get(reverse('detalhe', args=[documento.pk]))
+        self.assertEqual(resposta.status_code, 200)
+
     def test_arquivo_do_proprietario_abre_inline(self):
         documento = Documento.objects.create(
-            arquivo=pdf(), enviado_por=self.usuario, status='concluido')
+            arquivo=pdf(), empresa=self.empresa, enviado_por=self.usuario,
+            status='concluido')
         resposta = self.client.get(reverse('arquivo', args=[documento.pk]))
         self.assertEqual(resposta.status_code, 200)
         self.assertEqual(resposta['Content-Type'], 'application/pdf')
         self.assertIn('inline', resposta['Content-Disposition'])
 
-    def test_busca_nao_mostra_resultado_de_terceiro(self):
+    def test_busca_nao_mostra_resultado_de_outra_empresa(self):
         Documento.objects.create(
-            arquivo=pdf(), enviado_por=self.outro, status='concluido', placa='ABC1D23')
+            arquivo=pdf(), empresa=self.outra_empresa, enviado_por=self.outro,
+            status='concluido', placa='ABC1D23')
         resposta = self.client.get(reverse('busca'), {'placa': 'ABC1D23'})
         self.assertContains(resposta, 'não encontrada')
         self.assertNotContains(resposta, 'Ver arquivo')
 
     def test_dono_exclui_documento_e_arquivo_some_do_disco(self):
         documento = Documento.objects.create(
-            arquivo=pdf(), enviado_por=self.usuario, status='concluido')
+            arquivo=pdf(), empresa=self.empresa, enviado_por=self.usuario,
+            status='concluido')
         storage = documento.arquivo.storage
         nome_arquivo = documento.arquivo.name
         self.assertTrue(storage.exists(nome_arquivo))
@@ -105,16 +128,18 @@ class UploadEPermissoesTests(TestCase):
         self.assertFalse(Documento.objects.filter(pk=documento.pk).exists())
         self.assertFalse(storage.exists(nome_arquivo))
 
-    def test_usuario_nao_exclui_documento_de_terceiro(self):
+    def test_usuario_nao_exclui_documento_de_outra_empresa(self):
         documento = Documento.objects.create(
-            arquivo=pdf(), enviado_por=self.outro, status='concluido')
+            arquivo=pdf(), empresa=self.outra_empresa, enviado_por=self.outro,
+            status='concluido')
         resposta = self.client.post(reverse('excluir', args=[documento.pk]))
         self.assertEqual(resposta.status_code, 404)
         self.assertTrue(Documento.objects.filter(pk=documento.pk).exists())
 
     def test_get_em_excluir_nao_apaga_documento(self):
         documento = Documento.objects.create(
-            arquivo=pdf(), enviado_por=self.usuario, status='concluido')
+            arquivo=pdf(), empresa=self.empresa, enviado_por=self.usuario,
+            status='concluido')
         resposta = self.client.get(reverse('excluir', args=[documento.pk]))
         self.assertRedirects(resposta, reverse('detalhe', args=[documento.pk]))
         self.assertTrue(Documento.objects.filter(pk=documento.pk).exists())
@@ -129,26 +154,32 @@ class UploadEPermissoesTests(TestCase):
 @override_settings(MEDIA_ROOT=TEST_MEDIA_ROOT, STORAGES=TEST_STORAGES)
 class ListagensTests(TestCase):
     def setUp(self):
-        User = get_user_model()
-        self.usuario = User.objects.create_user('carlos', 'carlos@example.com', 'senha-segura')
-        self.outro = User.objects.create_user('debora', 'debora@example.com', 'senha-segura')
+        self.empresa = Empresa.objects.create(nome='Despachante Alfa')
+        self.outra_empresa = Empresa.objects.create(nome='Despachante Beta')
+        self.usuario = usuario_de(self.empresa, 'carlos', 'carlos@example.com')
+        self.outro = usuario_de(self.outra_empresa, 'debora', 'debora@example.com')
         self.client.force_login(self.usuario)
 
+    def documento(self, status, **extra):
+        extra.setdefault('empresa', self.empresa)
+        extra.setdefault('enviado_por', self.usuario)
+        return Documento.objects.create(arquivo=pdf(), status=status, **extra)
+
     def test_historico_mostra_apenas_concluido_e_erro(self):
-        Documento.objects.create(arquivo=pdf(), enviado_por=self.usuario, status='concluido')
-        Documento.objects.create(arquivo=pdf(), enviado_por=self.usuario, status='erro')
-        Documento.objects.create(arquivo=pdf(), enviado_por=self.usuario, status='aguardando')
-        Documento.objects.create(arquivo=pdf(), enviado_por=self.usuario, status='processando')
+        self.documento('concluido')
+        self.documento('erro')
+        self.documento('aguardando')
+        self.documento('processando')
         resposta = self.client.get(reverse('historico'))
         self.assertEqual(len(resposta.context['documentos']), 2)
         for documento in resposta.context['documentos']:
             self.assertIn(documento.status, ('concluido', 'erro'))
 
     def test_em_processamento_mostra_apenas_fila_e_processando(self):
-        Documento.objects.create(arquivo=pdf(), enviado_por=self.usuario, status='concluido')
-        Documento.objects.create(arquivo=pdf(), enviado_por=self.usuario, status='aguardando')
-        Documento.objects.create(arquivo=pdf(), enviado_por=self.usuario, status='processando')
-        Documento.objects.create(arquivo=pdf(), enviado_por=self.outro, status='aguardando')
+        self.documento('concluido')
+        self.documento('aguardando')
+        self.documento('processando')
+        self.documento('aguardando', empresa=self.outra_empresa, enviado_por=self.outro)
         resposta = self.client.get(reverse('em_processamento'))
         self.assertEqual(len(resposta.context['documentos']), 2)
         self.assertEqual(resposta.context['resumo']['total'], 2)
@@ -159,7 +190,7 @@ class ListagensTests(TestCase):
         self.assertContains(resposta, 'Não há itens em processamento')
 
     def test_em_processamento_status_json(self):
-        Documento.objects.create(arquivo=pdf(), enviado_por=self.usuario, status='aguardando')
+        self.documento('aguardando')
         resposta = self.client.get(reverse('em_processamento_status'))
         self.assertEqual(resposta.json()['resumo']['aguardando'], 1)
 
@@ -167,9 +198,11 @@ class ListagensTests(TestCase):
 @override_settings(MEDIA_ROOT=TEST_MEDIA_ROOT, STORAGES=TEST_STORAGES)
 class PipelineTests(TestCase):
     def setUp(self):
-        usuario = get_user_model().objects.create_user('operador')
+        empresa = Empresa.objects.create(nome='Despachante Alfa')
+        usuario = usuario_de(empresa, 'operador')
         self.documento = Documento.objects.create(
-            arquivo=pdf(), enviado_por=usuario, pipeline='openai', status='processando')
+            arquivo=pdf(), empresa=empresa, enviado_por=usuario,
+            pipeline='openai', status='processando')
 
     @patch('documentos.services._renderizar', return_value=['pagina.png'])
     @patch('documentos.services._openai_extrair', return_value={

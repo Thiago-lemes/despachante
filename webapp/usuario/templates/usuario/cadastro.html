@@ -12,7 +12,7 @@
     </header>
 
     <div class="flex justify-center px-4 pb-12">
-        <div class="w-full max-w-md rounded-xl bg-white p-8 shadow-lg">
+        <div class="w-full max-w-2xl rounded-xl bg-white p-8 shadow-lg">
             <div class="mb-6 text-center">
                 <h2 class="text-2xl font-bold text-slate-900">Criar conta</h2>
                 <p class="mt-1 text-sm text-slate-500">Cadastre sua empresa ou entre em uma já existente</p>
@@ -40,52 +40,54 @@
                     {% csrf_token %}
                     <input type="hidden" name="aba" value="empresa">
 
-                    <div>
-                        <label class="mb-1 block text-sm font-medium text-slate-700"
-                               for="{{ form_empresa.nome_empresa.id_for_label }}">Nome da empresa</label>
-                        {{ form_empresa.nome_empresa }}
-                    </div>
+                    <div class="grid gap-4 sm:grid-cols-2">
+                        <div>
+                            <label class="mb-1 block text-sm font-medium text-slate-700"
+                                   for="{{ form_empresa.nome_empresa.id_for_label }}">Nome da empresa</label>
+                            {{ form_empresa.nome_empresa }}
+                        </div>
 
-                    <div>
-                        <label class="mb-1 block text-sm font-medium text-slate-700"
-                               for="{{ form_empresa.cnpj.id_for_label }}">CNPJ da empresa</label>
-                        {{ form_empresa.cnpj }}
-                    </div>
+                        <div>
+                            <label class="mb-1 block text-sm font-medium text-slate-700"
+                                   for="{{ form_empresa.cnpj.id_for_label }}">CNPJ da empresa</label>
+                            {{ form_empresa.cnpj }}
+                        </div>
 
-                    <div>
-                        <label class="mb-1 block text-sm font-medium text-slate-700"
-                               for="{{ form_empresa.first_name.id_for_label }}">Nome</label>
-                        {{ form_empresa.first_name }}
-                    </div>
+                        <div>
+                            <label class="mb-1 block text-sm font-medium text-slate-700"
+                                   for="{{ form_empresa.first_name.id_for_label }}">Nome</label>
+                            {{ form_empresa.first_name }}
+                        </div>
 
-                    <div>
-                        <label class="mb-1 block text-sm font-medium text-slate-700"
-                               for="{{ form_empresa.last_name.id_for_label }}">Sobrenome</label>
-                        {{ form_empresa.last_name }}
-                    </div>
+                        <div>
+                            <label class="mb-1 block text-sm font-medium text-slate-700"
+                                   for="{{ form_empresa.last_name.id_for_label }}">Sobrenome</label>
+                            {{ form_empresa.last_name }}
+                        </div>
 
-                    <div>
-                        <label class="mb-1 block text-sm font-medium text-slate-700"
-                               for="{{ form_empresa.email.id_for_label }}">E-mail</label>
-                        {{ form_empresa.email }}
-                    </div>
+                        <div>
+                            <label class="mb-1 block text-sm font-medium text-slate-700"
+                                   for="{{ form_empresa.email.id_for_label }}">E-mail</label>
+                            {{ form_empresa.email }}
+                        </div>
 
-                    <div>
-                        <label class="mb-1 block text-sm font-medium text-slate-700"
-                               for="{{ form_empresa.username.id_for_label }}">Usuário</label>
-                        {{ form_empresa.username }}
-                    </div>
+                        <div>
+                            <label class="mb-1 block text-sm font-medium text-slate-700"
+                                   for="{{ form_empresa.username.id_for_label }}">Usuário</label>
+                            {{ form_empresa.username }}
+                        </div>
 
-                    <div>
-                        <label class="mb-1 block text-sm font-medium text-slate-700"
-                               for="{{ form_empresa.password1.id_for_label }}">Senha</label>
-                        {{ form_empresa.password1 }}
-                    </div>
+                        <div>
+                            <label class="mb-1 block text-sm font-medium text-slate-700"
+                                   for="{{ form_empresa.password1.id_for_label }}">Senha</label>
+                            {{ form_empresa.password1 }}
+                        </div>
 
-                    <div>
-                        <label class="mb-1 block text-sm font-medium text-slate-700"
-                               for="{{ form_empresa.password2.id_for_label }}">Confirmar senha</label>
-                        {{ form_empresa.password2 }}
+                        <div>
+                            <label class="mb-1 block text-sm font-medium text-slate-700"
+                                   for="{{ form_empresa.password2.id_for_label }}">Confirmar senha</label>
+                            {{ form_empresa.password2 }}
+                        </div>
                     </div>
 
                     {% if form_empresa.errors %}
@@ -116,47 +118,50 @@
                     {% csrf_token %}
                     <input type="hidden" name="aba" value="funcionario">
 
-                    <div>
-                        <label class="mb-1 block text-sm font-medium text-slate-700"
-                               for="{{ form_funcionario.cnpj.id_for_label }}">CNPJ da empresa</label>
-                        {{ form_funcionario.cnpj }}
-                        <p class="mt-1 text-xs text-slate-500">A empresa já precisa estar cadastrada no sistema.</p>
-                    </div>
+                    <div class="grid gap-4 sm:grid-cols-2">
+                        {# O CNPJ ocupa a linha toda: é ele que define a empresa do pedido. #}
+                        <div class="sm:col-span-2">
+                            <label class="mb-1 block text-sm font-medium text-slate-700"
+                                   for="{{ form_funcionario.cnpj.id_for_label }}">CNPJ da empresa</label>
+                            {{ form_funcionario.cnpj }}
+                            <p class="mt-1 text-xs text-slate-500">A empresa já precisa estar cadastrada no sistema.</p>
+                        </div>
 
-                    <div>
-                        <label class="mb-1 block text-sm font-medium text-slate-700"
-                               for="{{ form_funcionario.first_name.id_for_label }}">Nome</label>
-                        {{ form_funcionario.first_name }}
-                    </div>
+                        <div>
+                            <label class="mb-1 block text-sm font-medium text-slate-700"
+                                   for="{{ form_funcionario.first_name.id_for_label }}">Nome</label>
+                            {{ form_funcionario.first_name }}
+                        </div>
 
-                    <div>
-                        <label class="mb-1 block text-sm font-medium text-slate-700"
-                               for="{{ form_funcionario.last_name.id_for_label }}">Sobrenome</label>
-                        {{ form_funcionario.last_name }}
-                    </div>
+                        <div>
+                            <label class="mb-1 block text-sm font-medium text-slate-700"
+                                   for="{{ form_funcionario.last_name.id_for_label }}">Sobrenome</label>
+                            {{ form_funcionario.last_name }}
+                        </div>
 
-                    <div>
-                        <label class="mb-1 block text-sm font-medium text-slate-700"
-                               for="{{ form_funcionario.email.id_for_label }}">E-mail</label>
-                        {{ form_funcionario.email }}
-                    </div>
+                        <div>
+                            <label class="mb-1 block text-sm font-medium text-slate-700"
+                                   for="{{ form_funcionario.email.id_for_label }}">E-mail</label>
+                            {{ form_funcionario.email }}
+                        </div>
 
-                    <div>
-                        <label class="mb-1 block text-sm font-medium text-slate-700"
-                               for="{{ form_funcionario.username.id_for_label }}">Usuário</label>
-                        {{ form_funcionario.username }}
-                    </div>
+                        <div>
+                            <label class="mb-1 block text-sm font-medium text-slate-700"
+                                   for="{{ form_funcionario.username.id_for_label }}">Usuário</label>
+                            {{ form_funcionario.username }}
+                        </div>
 
-                    <div>
-                        <label class="mb-1 block text-sm font-medium text-slate-700"
-                               for="{{ form_funcionario.password1.id_for_label }}">Senha</label>
-                        {{ form_funcionario.password1 }}
-                    </div>
+                        <div>
+                            <label class="mb-1 block text-sm font-medium text-slate-700"
+                                   for="{{ form_funcionario.password1.id_for_label }}">Senha</label>
+                            {{ form_funcionario.password1 }}
+                        </div>
 
-                    <div>
-                        <label class="mb-1 block text-sm font-medium text-slate-700"
-                               for="{{ form_funcionario.password2.id_for_label }}">Confirmar senha</label>
-                        {{ form_funcionario.password2 }}
+                        <div>
+                            <label class="mb-1 block text-sm font-medium text-slate-700"
+                                   for="{{ form_funcionario.password2.id_for_label }}">Confirmar senha</label>
+                            {{ form_funcionario.password2 }}
+                        </div>
                     </div>
 
                     {% if form_funcionario.errors %}

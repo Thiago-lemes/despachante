@@ -16,6 +16,28 @@ from pathlib import Path
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+
+def carregar_env(caminho):
+    """Carrega o .env de desenvolvimento para dentro de os.environ.
+
+    Variáveis já definidas no ambiente têm precedência: em produção quem manda
+    é o systemd/container, e o arquivo nem existe. Sem isto, rodar
+    `manage.py runserver` local ignorava o webapp/.env inteiro — inclusive
+    DJANGO_DEBUG, o que fazia o WhiteNoise servir o CSS coletado em vez do
+    arquivo recém-compilado.
+    """
+    if not caminho.exists():
+        return
+    for linha in caminho.read_text(encoding='utf-8').splitlines():
+        linha = linha.strip()
+        if not linha or linha.startswith('#') or '=' not in linha:
+            continue
+        chave, _, valor = linha.partition('=')
+        os.environ.setdefault(chave.strip(), valor.strip().strip('"\''))
+
+
+carregar_env(BASE_DIR / '.env')
+
 SECRET_KEY = os.environ.get(
     'DJANGO_SECRET_KEY',
     '*9-=+%m4qtyx&=l@somioj!7j0n)jz&w^1yek^f2&bb51#&u4d',

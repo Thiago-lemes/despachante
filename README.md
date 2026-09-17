@@ -74,6 +74,10 @@ Abra `http://127.0.0.1:8000/`.
 Crie as variáveis de ambiente conforme `deploy/despachante.env.example`. Nunca
 versione chaves ou senhas.
 
+Em desenvolvimento, o `settings.py` carrega automaticamente `webapp/.env`.
+Variáveis já definidas no shell têm precedência, então em produção continua
+valendo o que o systemd/container define — o arquivo nem precisa existir.
+
 Variáveis principais:
 
 ```dotenv
