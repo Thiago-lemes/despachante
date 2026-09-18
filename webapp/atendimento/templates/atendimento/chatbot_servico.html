@@ -1,0 +1,285 @@
+{% extends 'documentos/base.html' %}
+{% block titulo %}{% if servico %}{{ servico.nome }}{% else %}Nova opção do menu{% endif %}{% endblock %}
+{% block conteudo %}
+<p class="eyebrow">Chatbot · {{ request.empresa.nome }}</p>
+<h1 class="page-title">{% if servico %}Editar opção do menu{% else %}Nova opção do menu{% endif %}</h1>
+<p class="page-subtitle">
+    Cada opção do menu é um serviço. O nome é o que o cliente lê ao lado do número;
+    os documentos são pedidos a ele, um a um, na ordem em que estiverem aqui.
+    A posição no menu se define arrastando na tela do chatbot.
+</p>
+
+{{ textos_bot|json_script:"textos-do-bot" }}
+{{ previa_submenu|json_script:"previa-submenu" }}
+
+{% if pai %}
+    <div class="alert-info mt-6">
+        Sub-opção de <strong>{{ pai.caminho }}</strong>. Ela aparece no submenu que o cliente
+        recebe depois de escolher essa opção.
+    </div>
+{% endif %}
+
+{% if subopcoes %}
+    <div class="alert-warning mt-6">
+        Esta opção ramifica em {{ subopcoes|length }} sub-opç{{ subopcoes|length|pluralize:"ão,ões" }},
+        então quem pede os documentos é a sub-opção escolhida — os documentos cadastrados
+        aqui não são usados enquanto houver sub-opção ativa.
+    </div>
+{% endif %}
+
+<div class="mt-8 grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
+<form method="post" class="space-y-6">
+    {% csrf_token %}
+    {# O pai vem da URL; repeti-lo no corpo evita perdê-lo se a action mudar. #}
+    {% if pai and not servico %}<input type="hidden" name="pai" value="{{ pai.id }}">{% endif %}
+
+    <section class="surface">
+        <h2 class="section-title">A opção</h2>
+
+        {% if form.non_field_errors %}
+            <div class="alert-error mt-4">{{ form.non_field_errors }}</div>
+        {% endif %}
+
+        <div class="mt-5 space-y-5">
+            {% for campo in form %}
+                {% if campo.name == 'ativo' %}
+                    <label class="flex items-center gap-3">
+                        {{ campo }}
+                        <span class="text-sm font-bold text-ink">{{ campo.label }}</span>
+                    </label>
+                {% else %}
+                    <div>
+                        <label for="{{ campo.id_for_label }}" class="data-label block">{{ campo.label }}</label>
+                        <div class="mt-1">{{ campo }}</div>
+                        {% for erro in campo.errors %}
+                            <p class="mt-1 text-xs font-bold text-red-600">{{ erro }}</p>
+                        {% endfor %}
+                    </div>
+                {% endif %}
+            {% endfor %}
+        </div>
+    </section>
+
+    <section class="surface">
+        <h2 class="section-title">Documentos exigidos</h2>
+        <p class="mt-1 text-sm text-slate-600">
+            Sem nenhum documento, o bot apenas registra o pedido e chama um atendente.
+        </p>
+
+        {{ formset.management_form }}
+        {% if formset.non_form_errors %}
+            <div class="alert-error mt-4">{{ formset.non_form_errors }}</div>
+        {% endif %}
+
+        <div class="mt-5 space-y-4" data-documentos>
+            {% for documento_form in formset %}
+                <fieldset class="rounded border border-steel p-4" data-documento-linha>
+                    {{ documento_form.id }}
+                    <div class="grid gap-4 sm:grid-cols-2">
+                        {% for campo in documento_form.visible_fields %}
+                            {% if campo.name == 'obrigatorio' %}
+                                <label class="flex items-center gap-3 sm:col-span-2">
+                                    {{ campo }}
+                                    <span class="text-sm font-bold text-ink">{{ campo.label }}</span>
+                                </label>
+                            {% elif campo.name == 'DELETE' %}
+                                <label class="flex items-center gap-3 text-red-700 sm:col-span-2">
+                                    {{ campo }}
+                                    <span class="text-sm font-bold">Remover este documento ao salvar</span>
+                                </label>
+                            {% else %}
+                                <div{% if campo.name == 'instrucoes' %} class="sm:col-span-2"{% endif %}>
+                                    <label for="{{ campo.id_for_label }}" class="data-label block">{{ campo.label }}</label>
+                                    <div class="mt-1">{{ campo }}</div>
+                                    {% for erro in campo.errors %}
+                                        <p class="mt-1 text-xs font-bold text-red-600">{{ erro }}</p>
+                                    {% endfor %}
+                                </div>
+                            {% endif %}
+                        {% endfor %}
+                    </div>
+                </fieldset>
+            {% endfor %}
+        </div>
+
+        <button type="button" class="btn-secondary mt-4" data-adicionar-documento>
+            Adicionar documento
+        </button>
+    </section>
+
+    <div class="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+        <a class="btn-secondary" href="{% url 'chatbot_config' %}">Cancelar</a>
+        <button type="submit" class="btn-primary">Salvar opção</button>
+    </div>
+</form>
+
+<aside>
+    <div class="surface lg:sticky lg:top-6">
+        <h2 class="section-title">Prévia da conversa</h2>
+        <p class="mt-1 text-xs text-slate-500">
+            Como o atendimento segue depois que o cliente escolhe esta opção.
+        </p>
+        <div class="mt-4 space-y-2 rounded-lg bg-slate-100 p-3" data-previa-conversa></div>
+        <p class="mt-3 text-xs text-slate-500">
+            A prévia acompanha o que você digita. As mudanças só valem depois de salvar.
+        </p>
+    </div>
+</aside>
+</div>
+
+<script>
+    // Clona a última linha do formset e renumera os campos. O formset do Django
+    // identifica cada linha pelo índice no name/id, então renumerar é o que faz
+    // a linha nova chegar ao servidor como um documento a mais.
+    document.querySelector('[data-adicionar-documento]')?.addEventListener('click', () => {
+        const container = document.querySelector('[data-documentos]');
+        const linhas = container.querySelectorAll('[data-documento-linha]');
+        const total = document.getElementById('id_documentos_exigidos-TOTAL_FORMS');
+        const indice = parseInt(total.value, 10);
+
+        const nova = linhas[linhas.length - 1].cloneNode(true);
+        nova.querySelectorAll('input, textarea, select').forEach((campo) => {
+            if (campo.name) {
+                campo.name = campo.name.replace(/-\d+-/, `-${indice}-`);
+            }
+            if (campo.id) {
+                campo.id = campo.id.replace(/-\d+-/, `-${indice}-`);
+            }
+            // A cópia não pode carregar a chave primária da linha original,
+            // senão o save sobrescreveria o documento existente.
+            if (campo.name.endsWith('-id')) {
+                campo.value = '';
+            } else if (campo.type === 'checkbox') {
+                campo.checked = campo.name.endsWith('-obrigatorio');
+            } else {
+                campo.value = '';
+            }
+        });
+        nova.querySelectorAll('label[for]').forEach((rotulo) => {
+            rotulo.htmlFor = rotulo.htmlFor.replace(/-\d+-/, `-${indice}-`);
+        });
+        nova.querySelectorAll('p.text-red-600').forEach((erro) => erro.remove());
+
+        container.appendChild(nova);
+        total.value = indice + 1;
+        document.dispatchEvent(new CustomEvent('documentos-mudaram'));
+    });
+</script>
+
+<script>
+(function () {
+    const painel = document.querySelector('[data-previa-conversa]');
+    if (!painel) return;
+
+    // Moldes vindos do servidor: são os mesmos que services/bot.py usa ao falar
+    // com o cliente, então a prévia não pode divergir do que ele vai receber.
+    const TEXTOS = JSON.parse(document.getElementById('textos-do-bot').textContent);
+    const SUBMENU = JSON.parse(document.getElementById('previa-submenu').textContent);
+    const PROTOCOLO_EXEMPLO = 'A1B2C3D4';
+
+    const campoNome = document.getElementById('id_nome');
+    const campoRecado = document.getElementById('id_mensagem_apos_escolha');
+
+    function preencher(molde, valores) {
+        return molde.replace(/\{(\w+)\}/g, (_, chave) => valores[chave] ?? '');
+    }
+
+    function documentos() {
+        return Array.from(document.querySelectorAll('[data-documento-linha]'))
+            .map((linha) => ({
+                tipo: linha.querySelector('[name$="-tipo"]')?.value.trim() || '',
+                instrucoes: linha.querySelector('[name$="-instrucoes"]')?.value.trim() || '',
+                removido: linha.querySelector('[name$="-DELETE"]')?.checked || false,
+            }))
+            // Linha em branco ou marcada para remover não chega a virar pedido.
+            .filter((doc) => doc.tipo && !doc.removido);
+    }
+
+    function bolha(texto, quem) {
+        const item = document.createElement('div');
+        const doBot = quem === 'bot';
+        item.className = 'max-w-[90%] whitespace-pre-wrap rounded-lg px-3 py-2 text-xs leading-5 ' + (
+            doBot ? 'bg-white text-slate-800 ring-1 ring-slate-200'
+                  : 'ml-auto bg-green-100 text-slate-800');
+        item.textContent = texto;
+        return item;
+    }
+
+    function legenda(texto) {
+        const item = document.createElement('p');
+        item.className = 'py-1 text-center text-[11px] font-bold uppercase tracking-wide text-slate-400';
+        item.textContent = texto;
+        return item;
+    }
+
+    function atualizar() {
+        const nome = campoNome?.value.trim() || 'esta opção';
+        const recado = campoRecado?.value.trim() || '';
+        const docs = documentos();
+        painel.replaceChildren();
+
+        painel.appendChild(legenda('cliente escolhe esta opção'));
+
+        // Opção que ramifica não pede documentos: o que o cliente recebe é o
+        // submenu, aberto pela pergunta deste mesmo campo.
+        if (SUBMENU.opcoes.length) {
+            const linhas = [recado || SUBMENU.pergunta_padrao];
+            SUBMENU.opcoes.forEach((opcao, indice) => linhas.push(`${indice + 1} - ${opcao}`));
+            linhas.push(`${SUBMENU.opcoes.length + 1} - ${SUBMENU.rotulo_atendente}`);
+            painel.appendChild(bolha(linhas.join('\n'), 'bot'));
+            painel.appendChild(legenda('a conversa segue na sub-opção escolhida'));
+            return;
+        }
+
+        const abertura = recado ? recado + '\n\n' : '';
+
+        if (!docs.length) {
+            painel.appendChild(bolha(
+                abertura + preencher(TEXTOS.pedido_sem_documentos, {servico: nome})
+                + preencher(TEXTOS.protocolo, {protocolo: PROTOCOLO_EXEMPLO}), 'bot'));
+            painel.appendChild(legenda('um atendente assume daqui'));
+            return;
+        }
+
+        painel.appendChild(bolha(abertura + preencher(TEXTOS.primeiro_documento, {
+            servico: nome, tipo: docs[0].tipo, instrucoes: docs[0].instrucoes,
+        }), 'bot'));
+
+        docs.forEach((doc, indice) => {
+            painel.appendChild(bolha('📎 ' + doc.tipo, 'cliente'));
+            const proximo = docs[indice + 1];
+            if (proximo) {
+                painel.appendChild(bolha(preencher(TEXTOS.proximo_documento, {
+                    recebido: doc.tipo, tipo: proximo.tipo, instrucoes: proximo.instrucoes,
+                }), 'bot'));
+            }
+        });
+
+        painel.appendChild(bolha(
+            TEXTOS.conclusao + preencher(TEXTOS.protocolo, {protocolo: PROTOCOLO_EXEMPLO}),
+            'bot'));
+        painel.appendChild(legenda('um atendente assume daqui'));
+
+        const nota = document.createElement('p');
+        nota.className = 'pt-2 text-[11px] leading-4 text-slate-500';
+        nota.textContent = preencher(TEXTOS.documento_pendente, {
+            tipo: docs[0].tipo, instrucoes: '…', saida_humana: TEXTOS.saida_humana,
+        }).split('\n')[0] + ' — é o que o bot responde se vier texto no lugar do arquivo.';
+        painel.appendChild(nota);
+    }
+
+    document.addEventListener('input', (evento) => {
+        if (evento.target.closest('[data-documento-linha]')
+            || evento.target === campoNome || evento.target === campoRecado) {
+            atualizar();
+        }
+    });
+    document.addEventListener('change', (evento) => {
+        if (evento.target.matches('[name$="-DELETE"]')) atualizar();
+    });
+    document.addEventListener('documentos-mudaram', atualizar);
+
+    atualizar();
+})();
+</script>
+{% endblock %}

@@ -1,4 +1,6 @@
+import re
 import uuid
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.conf import settings
 
@@ -44,19 +46,156 @@ class Contato(models.Model):
 
 
 class Servico(models.Model):
+    """Uma opção do menu do WhatsApp.
+
+    Uma opção pode ter sub-opções ("Transferência" → "Carro", "Moto"), em
+    quantos níveis forem necessários. Só a opção-folha — a que não tem
+    sub-opções ativas — pede documentos e faz nascer o card no Kanban; as
+    intermediárias existem para ramificar a conversa.
+    """
+
     empresa = models.ForeignKey('empresas.Empresa', on_delete=models.PROTECT, related_name='servicos')
+    pai = models.ForeignKey(
+        'self', null=True, blank=True, on_delete=models.CASCADE, related_name='subopcoes',
+        help_text='Opção da qual esta é uma sub-opção. Vazio = opção do menu principal.')
     nome = models.CharField(max_length=255)
     descricao = models.TextField(blank=True)
+    # Enviada assim que o cliente escolhe esta opção: numa opção-folha é o recado
+    # antes de pedir documentos ("separe os documentos"); numa opção com
+    # sub-opções é a pergunta que abre o submenu ("Transferência de quê?").
+    mensagem_apos_escolha = models.TextField(blank=True)
     ativo = models.BooleanField(default=True)
+    # Posição no menu do WhatsApp, entre as opções de mesmo pai. Empatados,
+    # desempata pelo nome — foi assim que o menu se comportou antes de existir
+    # ordem, e serviços novos entram com 0 sem embaralhar o que já estava.
+    ordem = models.PositiveSmallIntegerField(default=0)
     criado_em = models.DateTimeField(auto_now_add=True)
 
+    PERGUNTA_PADRAO = 'Escolha uma opção:'
+
     class Meta:
+        ordering = ['ordem', 'nome']
         constraints = [
-            models.UniqueConstraint(fields=['empresa', 'nome'], name='servico_empresa_nome_unico'),
+            # Em SQL, NULL != NULL: uma constraint única sobre ('empresa', 'pai',
+            # 'nome') deixaria passar dois nomes iguais no menu principal. Daí as
+            # duas, separadas pela condição.
+            models.UniqueConstraint(
+                fields=['empresa', 'nome'], condition=models.Q(pai__isnull=True),
+                name='servico_empresa_nome_unico'),
+            models.UniqueConstraint(
+                fields=['empresa', 'pai', 'nome'], condition=models.Q(pai__isnull=False),
+                name='servico_empresa_pai_nome_unico'),
         ]
 
     def __str__(self):
         return self.nome
+
+    def subopcoes_do_menu(self):
+        return list(self.subopcoes.filter(ativo=True).order_by('ordem', 'nome'))
+
+    def e_folha(self):
+        """Opção que conclui o pedido: sem sub-opção ativa para onde ramificar."""
+        return not self.subopcoes.filter(ativo=True).exists()
+
+    def ancestrais(self):
+        """Do menu principal até o pai desta opção.
+
+        O conjunto de visitados é uma guarda contra ciclo: um `pai` apontando
+        para um descendente faria este laço rodar para sempre.
+        """
+        caminho, atual, vistos = [], self.pai, {self.pk}
+        while atual is not None and atual.pk not in vistos:
+            caminho.append(atual)
+            vistos.add(atual.pk)
+            atual = atual.pai
+        caminho.reverse()
+        return caminho
+
+    def caminho(self, separador=' › '):
+        return separador.join([s.nome for s in self.ancestrais()] + [self.nome])
+
+    @property
+    def nivel(self):
+        return len(self.ancestrais())
+
+    def pergunta_do_submenu(self):
+        return self.mensagem_apos_escolha.strip() or self.PERGUNTA_PADRAO
+
+
+class ConfiguracaoBot(models.Model):
+    """Comportamento do chatbot de WhatsApp, por empresa.
+
+    Existe uma linha por empresa, criada sob demanda por `para()`. Os defaults
+    reproduzem exatamente os textos que estavam fixos em `services/bot.py`, de
+    modo que uma empresa que nunca abrir a tela continua atendendo igual.
+    """
+
+    PLACEHOLDER_EMPRESA = '{empresa}'
+
+    SAUDACAO_PADRAO = 'Olá! Sou o assistente virtual da {empresa}.'
+    ROTULO_ATENDENTE_PADRAO = 'Falar com um atendente'
+    NAO_ENTENDI_PADRAO = 'Não entendi.'
+    TRANSFERENCIA_PADRAO = 'Vou chamar um atendente para falar com você por aqui. Só um momento.'
+    CONCLUSAO_PADRAO = ('Recebi todos os documentos!\n\n'
+                        'Um atendente vai analisar e falar com você por aqui.')
+    PALAVRAS_ATENDENTE_PADRAO = 'atendente, humano, pessoa'
+
+    empresa = models.OneToOneField(
+        'empresas.Empresa', on_delete=models.CASCADE, related_name='configuracao_bot')
+    ativo = models.BooleanField(
+        default=True,
+        help_text='Desligado, toda mensagem nova vai direto para um atendente.')
+    saudacao = models.TextField(
+        default=SAUDACAO_PADRAO,
+        help_text='Primeira linha do menu. Use {empresa} para o nome da empresa.')
+    rotulo_atendente = models.CharField(
+        max_length=120, default=ROTULO_ATENDENTE_PADRAO,
+        help_text='Texto da última opção do menu, que sempre chama um humano.')
+    mensagem_nao_entendi = models.TextField(
+        default=NAO_ENTENDI_PADRAO,
+        help_text='Vem antes do menu repetido quando a resposta não é uma opção válida.')
+    mensagem_transferencia = models.TextField(default=TRANSFERENCIA_PADRAO)
+    mensagem_conclusao = models.TextField(
+        default=CONCLUSAO_PADRAO,
+        help_text='Enviada quando o cliente termina de mandar os documentos.')
+    max_tentativas_invalidas = models.PositiveSmallIntegerField(
+        default=3, validators=[MinValueValidator(1), MaxValueValidator(10)],
+        help_text='Respostas seguidas não entendidas antes de transferir para um atendente.')
+    palavras_atendente = models.CharField(
+        max_length=255, default=PALAVRAS_ATENDENTE_PADRAO,
+        help_text='Separadas por vírgula. Em qualquer etapa, transferem para um atendente.')
+    atualizada_em = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'configuração do chatbot'
+        verbose_name_plural = 'configurações do chatbot'
+
+    def __str__(self):
+        return f'Chatbot de {self.empresa}'
+
+    @classmethod
+    def para(cls, empresa):
+        """Configuração da empresa, criando-a com os padrões na primeira vez."""
+        configuracao, _ = cls.objects.get_or_create(empresa=empresa)
+        return configuracao
+
+    def saudacao_formatada(self):
+        return self.saudacao.replace(self.PLACEHOLDER_EMPRESA, self.empresa.nome)
+
+    def lista_palavras_atendente(self):
+        return [p.strip() for p in (self.palavras_atendente or '').split(',') if p.strip()]
+
+    def regex_atendente(self):
+        """Regex das palavras que tiram o cliente do fluxo automático.
+
+        Sem palavras cadastradas devolve None: um regex vazio casaria com tudo
+        e transferiria toda mensagem.
+        """
+        palavras = self.lista_palavras_atendente()
+        if not palavras:
+            return None
+        return re.compile(
+            r'\b(' + '|'.join(re.escape(p) for p in palavras) + r')\b', re.IGNORECASE)
 
 
 class Conversa(models.Model):

@@ -1,0 +1,377 @@
+{% extends 'documentos/base.html' %}
+{% block titulo %}Chatbot{% endblock %}
+{% block conteudo %}
+<p class="eyebrow">{{ request.empresa.nome }}</p>
+<h1 class="page-title">Chatbot do WhatsApp</h1>
+<p class="page-subtitle">
+    Defina o que o cliente vê ao chamar sua empresa no WhatsApp: as opções do menu,
+    os documentos que o bot pede e quando o atendimento passa para uma pessoa.
+</p>
+
+{# O <form> fica vazio de propósito: seus campos estão espalhados pela página,   #}
+{# intercalados com a lista de serviços — que tem forms próprios de excluir e    #}
+{# não pode ficar aninhada. Cada campo se liga aqui pelo atributo form=.         #}
+<form id="form-chatbot" method="post">{% csrf_token %}</form>
+
+{% if form.non_field_errors %}
+    <div class="alert-error mt-6">{{ form.non_field_errors }}</div>
+{% endif %}
+
+{% if tem_servicos and not servicos_no_menu %}
+    <div class="alert-warning mt-6">
+        Todas as opções estão fora do menu. Enquanto ele estiver vazio, toda mensagem
+        nova vai direto para um atendente.
+    </div>
+{% endif %}
+
+<div class="mt-8 grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+    <div class="space-y-6">
+
+        <section class="surface">
+            <h2 class="section-title">O menu</h2>
+            <p class="mt-1 text-sm text-slate-600">
+                É a primeira mensagem que o cliente recebe. Ele responde com o número
+                da opção.
+            </p>
+
+            {% with campo=form.saudacao %}
+                <div class="mt-5">
+                    <label for="{{ campo.id_for_label }}" class="data-label block">{{ campo.label }}</label>
+                    <div class="mt-1">{{ campo }}</div>
+                    {% if campo.help_text %}<p class="mt-1 text-xs text-slate-500">{{ campo.help_text }}</p>{% endif %}
+                    {% for erro in campo.errors %}<p class="mt-1 text-xs font-bold text-red-600">{{ erro }}</p>{% endfor %}
+                </div>
+            {% endwith %}
+
+            <div class="mt-6">
+                <p class="data-label">Opções do menu</p>
+                <p class="mt-1 text-xs text-slate-500">
+                    Cada opção é um serviço, com os documentos que o bot vai pedir. Uma opção
+                    pode ramificar em sub-opções ("Transferência" → "Carro", "Moto"); só a
+                    última do caminho pede documentos e abre o card no Kanban.
+                    Arraste pela alça — ou use as setas — para mudar a ordem; ela é salva na hora.
+                </p>
+
+                {% if tem_servicos %}
+                    <div class="mt-3">
+                        {% include 'atendimento/_menu_opcoes.html' with grupo=menu pai_id=None %}
+                    </div>
+                {% else %}
+                    <p class="mt-3 rounded border border-dashed border-slate-300 bg-slate-50 px-4 py-6 text-center text-sm text-slate-600">
+                        Nenhuma opção cadastrada. Enquanto o menu estiver vazio, toda mensagem
+                        nova vai direto para um atendente.
+                    </p>
+                {% endif %}
+
+                <a class="btn-primary mt-3" href="{% url 'chatbot_servico_novo' %}">
+                    + Adicionar opção do menu
+                </a>
+            </div>
+
+            {% with campo=form.rotulo_atendente %}
+                <div class="mt-6 rounded border border-steel bg-slate-50 p-4">
+                    <label for="{{ campo.id_for_label }}" class="data-label block">
+                        <span class="font-data text-ink" data-numero-ultima-opcao>{{ servicos_no_menu|length|add:1 }}</span>
+                        · {{ campo.label }}
+                    </label>
+                    <div class="mt-1">{{ campo }}</div>
+                    {% if campo.help_text %}<p class="mt-1 text-xs text-slate-500">{{ campo.help_text }}</p>{% endif %}
+                    {% for erro in campo.errors %}<p class="mt-1 text-xs font-bold text-red-600">{{ erro }}</p>{% endfor %}
+                </div>
+            {% endwith %}
+        </section>
+
+        <section class="surface">
+            <h2 class="section-title">Comportamento</h2>
+            <p class="mt-1 text-sm text-slate-600">
+                O que o bot faz fora do menu: quando não entende, quando desiste e quando termina.
+            </p>
+
+            <div class="mt-5 space-y-5">
+                {% for campo in form.campos_de_comportamento %}
+                    {% if campo.name == 'ativo' %}
+                        <label class="flex items-start gap-3 rounded border border-steel bg-slate-50 p-4">
+                            {{ campo }}
+                            <span>
+                                <span class="block text-sm font-bold text-ink">{{ campo.label }}</span>
+                                <span class="block text-sm text-slate-600">{{ campo.help_text }}</span>
+                            </span>
+                        </label>
+                    {% else %}
+                        <div>
+                            <label for="{{ campo.id_for_label }}" class="data-label block">{{ campo.label }}</label>
+                            <div class="mt-1">{{ campo }}</div>
+                            {% if campo.help_text %}<p class="mt-1 text-xs text-slate-500">{{ campo.help_text }}</p>{% endif %}
+                            {% for erro in campo.errors %}<p class="mt-1 text-xs font-bold text-red-600">{{ erro }}</p>{% endfor %}
+                        </div>
+                    {% endif %}
+                {% endfor %}
+            </div>
+        </section>
+
+        <div class="flex justify-end">
+            <button type="submit" form="form-chatbot" class="btn-primary">Salvar configuração</button>
+        </div>
+    </div>
+
+    <aside>
+        <div class="surface lg:sticky lg:top-6" data-previa data-empresa-nome="{{ request.empresa.nome }}">
+            <h2 class="section-title">Prévia do menu</h2>
+            <p class="mt-1 text-xs text-slate-500">É isto que o cliente recebe na primeira mensagem.</p>
+            <div class="mt-4 whitespace-pre-wrap rounded-lg bg-green-50 p-4 text-sm leading-6 text-slate-800 ring-1 ring-green-200"
+                 data-previa-texto>{{ configuracao.saudacao_formatada }}
+
+Digite o número do serviço:
+{% for servico in servicos_no_menu %}{{ forloop.counter }} - {{ servico.nome }}
+{% endfor %}{{ servicos_no_menu|length|add:1 }} - {{ configuracao.rotulo_atendente }}</div>
+            <p class="mt-3 hidden text-xs font-bold text-amber-700" data-previa-desligado>
+                Com o atendimento automático desligado, este menu não é enviado: toda
+                mensagem vai direto para um atendente.
+            </p>
+            <p class="mt-3 text-xs text-slate-500">
+                A prévia acompanha o que você digita. As mudanças só valem depois de salvar.
+            </p>
+        </div>
+    </aside>
+</div>
+
+<section class="mt-10">
+    <h2 class="section-title">Conversas em atendimento humano</h2>
+    <p class="page-subtitle">
+        O bot se cala quando alguém assume o card no Kanban. Devolver ao atendimento
+        automático reabre a triagem e reenvia o menu ao cliente.
+    </p>
+
+    {% if conversas_humanas %}
+        <div class="table-wrap mt-4">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Contato</th>
+                        <th>Serviço</th>
+                        <th>Etapa</th>
+                        <th>Última atividade</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for conversa in conversas_humanas %}
+                        <tr>
+                            <td>
+                                <span class="font-semibold text-ink">{{ conversa.contato.nome_exibicao }}</span>
+                                <span class="block text-xs text-slate-500">{{ conversa.contato.telefone_exibicao }}</span>
+                            </td>
+                            <td class="text-slate-600">{{ conversa.servico.nome|default:"—" }}</td>
+                            <td class="text-slate-600">{{ conversa.get_estado_display }}</td>
+                            <td class="text-slate-600">{{ conversa.atualizada_em|date:"d/m/Y H:i" }}</td>
+                            <td class="text-right">
+                                <form method="post" action="{% url 'chatbot_religar_conversa' conversa.id %}">
+                                    {% csrf_token %}
+                                    <button type="submit" class="btn-secondary min-h-9 px-3 py-1">
+                                        Devolver ao bot
+                                    </button>
+                                </form>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <p class="prose-copy mt-4">Nenhuma conversa em atendimento humano no momento.</p>
+    {% endif %}
+</section>
+
+<style>
+    [data-servico-linha].is-dragging { opacity: .4; }
+    [data-servico-linha].is-drop-target { box-shadow: inset 0 2px 0 0 #18a34a; }
+</style>
+
+<script>
+(function () {
+    const previa = document.querySelector('[data-previa]');
+    const previaTexto = previa?.querySelector('[data-previa-texto]');
+    const previaDesligado = previa?.querySelector('[data-previa-desligado]');
+    const numeroUltimaOpcao = document.querySelector('[data-numero-ultima-opcao]');
+
+    // Cada nível do menu é uma lista própria: a ordem vale entre irmãos, e o
+    // submenu de "Transferência" não se mistura com o menu principal.
+    const listas = Array.from(document.querySelectorAll('[data-lista-servicos]'));
+    const listaPrincipal = listas.find((lista) => !lista.dataset.paiId);
+
+    const campoSaudacao = document.getElementById('id_saudacao');
+    const campoRotulo = document.getElementById('id_rotulo_atendente');
+    const campoAtivo = document.getElementById('id_ativo');
+
+    // ':scope >' é o que impede uma lista enxergar as linhas dos próprios
+    // submenus, que moram dentro dos <li> dela.
+    function linhasDe(lista) {
+        return lista ? Array.from(lista.querySelectorAll(':scope > [data-servico-linha]')) : [];
+    }
+
+    // A prévia mostra a primeira mensagem, então só o menu principal entra —
+    // os submenus só aparecem depois que o cliente escolhe.
+    function atualizarPrevia() {
+        if (!previaTexto) return;
+
+        const empresa = previa.dataset.empresaNome || '';
+        const saudacao = (campoSaudacao?.value ?? '').replace('{empresa}', empresa);
+        const rotulo = campoRotulo?.value ?? '';
+        const ativos = linhasDe(listaPrincipal)
+            .filter((linha) => linha.dataset.servicoAtivo === '1');
+
+        const partes = [saudacao, '', 'Digite o número do serviço:'];
+        ativos.forEach((linha, indice) => {
+            partes.push(`${indice + 1} - ${linha.dataset.servicoNome}`);
+        });
+        partes.push(`${ativos.length + 1} - ${rotulo}`);
+
+        // textContent: nome de serviço é texto do usuário, nunca HTML.
+        previaTexto.textContent = partes.join('\n');
+
+        if (numeroUltimaOpcao) numeroUltimaOpcao.textContent = ativos.length + 1;
+
+        // A classe .hidden do Tailwind vence o atributo hidden — alternar a classe
+        // é o que realmente esconde o aviso.
+        previaDesligado?.classList.toggle('hidden', Boolean(campoAtivo?.checked));
+    }
+
+    [campoSaudacao, campoRotulo].forEach((campo) => {
+        campo?.addEventListener('input', atualizarPrevia);
+    });
+    campoAtivo?.addEventListener('change', atualizarPrevia);
+
+    // O número mostrado é a posição no menu, contando só o que está ativo:
+    // mostrar a posição bruta faria a lista discordar da prévia.
+    function renumerar(lista) {
+        let posicaoNoMenu = 0;
+        linhasDe(lista).forEach((linha, indice, todas) => {
+            const noMenu = linha.dataset.servicoAtivo === '1';
+            if (noMenu) posicaoNoMenu += 1;
+            linha.querySelector(':scope > div [data-posicao]').textContent =
+                noMenu ? posicaoNoMenu : '—';
+            linha.querySelector(':scope > div [data-mover="cima"]').disabled = indice === 0;
+            linha.querySelector(':scope > div [data-mover="baixo"]').disabled =
+                indice === todas.length - 1;
+        });
+    }
+
+    const ordemSalva = new Map(
+        listas.map((lista) => [lista, linhasDe(lista).map((l) => l.dataset.servicoId)]));
+
+    function salvarOrdem(lista) {
+        const ordem = linhasDe(lista).map((linha) => linha.dataset.servicoId);
+        const anterior = ordemSalva.get(lista);
+        const paiId = lista.dataset.paiId;
+
+        fetch('{% url "chatbot_reordenar_servicos" %}', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'X-CSRFToken': '{{ csrf_token }}'},
+            body: JSON.stringify({pai: paiId ? Number(paiId) : null, ordem: ordem.map(Number)}),
+        })
+            .then((resposta) => resposta.json())
+            .then((dados) => {
+                if (dados.status !== 'ok') throw new Error(dados.erro || 'erro');
+                ordemSalva.set(lista, ordem);
+            })
+            .catch(() => {
+                // O servidor recusou: a tela volta para a última ordem aceita,
+                // senão ela mostraria um menu que o cliente não vai receber.
+                const porId = new Map(linhasDe(lista).map((l) => [l.dataset.servicoId, l]));
+                anterior.forEach((id) => lista.appendChild(porId.get(id)));
+                renumerar(lista);
+                atualizarPrevia();
+                alert('Não foi possível salvar a nova ordem. Tente novamente.');
+            });
+    }
+
+    function mover(linha, direcao) {
+        const lista = linha.parentElement;
+        if (direcao === 'cima') {
+            const anterior = linha.previousElementSibling;
+            if (!anterior) return;
+            lista.insertBefore(linha, anterior);
+        } else {
+            const proxima = linha.nextElementSibling;
+            if (!proxima) return;
+            lista.insertBefore(proxima, linha);
+        }
+        renumerar(lista);
+        atualizarPrevia();
+        salvarOrdem(lista);
+    }
+
+    // Um listener só, no documento: o clique numa seta de submenu sobe até aqui
+    // e a linha diz sozinha a que lista pertence.
+    document.addEventListener('click', (evento) => {
+        const botao = evento.target.closest('[data-mover]');
+        if (!botao) return;
+        mover(botao.closest('[data-servico-linha]'), botao.dataset.mover);
+    });
+
+    // Arrastar a linha inteira atrapalharia a seleção de texto: só a alça inicia
+    // o arrasto, e ela liga o draggable da linha no mousedown.
+    let arrastada = null;
+
+    listas.forEach((lista) => {
+        linhasDe(lista).forEach((linha) => {
+            const alca = linha.querySelector(':scope > div [data-arrastar]');
+            alca?.addEventListener('mousedown', () => { linha.draggable = true; });
+            alca?.addEventListener('mouseup', () => { linha.draggable = false; });
+
+            linha.addEventListener('dragstart', (evento) => {
+                // Sem parar a propagação, arrastar uma sub-opção também
+                // iniciaria o arrasto do <li> do pai, que a contém.
+                evento.stopPropagation();
+                arrastada = linha;
+                linha.classList.add('is-dragging');
+                evento.dataTransfer.effectAllowed = 'move';
+            });
+
+            linha.addEventListener('dragend', (evento) => {
+                evento.stopPropagation();
+                linha.classList.remove('is-dragging');
+                linha.draggable = false;
+                arrastada = null;
+                document.querySelectorAll('[data-servico-linha]')
+                    .forEach((l) => l.classList.remove('is-drop-target'));
+            });
+
+            linha.addEventListener('dragover', (evento) => {
+                // Só entre irmãos: soltar num outro nível mudaria o pai da opção,
+                // que é outra operação e o servidor recusaria.
+                if (!arrastada || arrastada === linha ||
+                    arrastada.parentElement !== linha.parentElement) return;
+                evento.preventDefault();
+                evento.stopPropagation();
+                evento.dataTransfer.dropEffect = 'move';
+                linha.classList.add('is-drop-target');
+            });
+
+            linha.addEventListener('dragleave', () => linha.classList.remove('is-drop-target'));
+
+            linha.addEventListener('drop', (evento) => {
+                evento.preventDefault();
+                evento.stopPropagation();
+                linha.classList.remove('is-drop-target');
+                if (!arrastada || arrastada === linha ||
+                    arrastada.parentElement !== linha.parentElement) return;
+
+                // Solta antes ou depois conforme o sentido do movimento na lista.
+                const posicoes = linhasDe(lista);
+                const destinoAbaixo = posicoes.indexOf(arrastada) < posicoes.indexOf(linha);
+                lista.insertBefore(arrastada, destinoAbaixo ? linha.nextElementSibling : linha);
+
+                renumerar(lista);
+                atualizarPrevia();
+                salvarOrdem(lista);
+            });
+        });
+
+        renumerar(lista);
+    });
+
+    atualizarPrevia();
+})();
+</script>
+{% endblock %}

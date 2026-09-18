@@ -5,6 +5,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
 from .models import EmpresaUsuario
+from .permissoes import somente_administrador
 
 
 @login_required
@@ -34,12 +35,9 @@ def acesso_pendente(request):
     return render(request, 'empresas/acesso_pendente.html', {'vinculo': vinculo})
 
 
-@login_required
+@somente_administrador()
 def equipe(request):
     """Lista a equipe da empresa ativa e os pedidos de acesso pendentes."""
-    if not _pode_administrar(request):
-        return HttpResponseForbidden('Apenas administradores da empresa acessam esta página.')
-
     vinculos = EmpresaUsuario.objects.filter(
         empresa=request.empresa).select_related('usuario').order_by('usuario__username')
     return render(request, 'empresas/equipe.html', {
@@ -49,13 +47,10 @@ def equipe(request):
     })
 
 
-@login_required
 @require_POST
+@somente_administrador('Apenas administradores da empresa aprovam acessos.')
 def aprovar_vinculo(request, vinculo_id):
     """Libera o acesso de um funcionário à empresa ativa."""
-    if not _pode_administrar(request):
-        return HttpResponseForbidden('Apenas administradores da empresa aprovam acessos.')
-
     vinculo = get_object_or_404(
         EmpresaUsuario, pk=vinculo_id, empresa=request.empresa, ativo=False)
 
@@ -69,13 +64,10 @@ def aprovar_vinculo(request, vinculo_id):
     return redirect('equipe')
 
 
-@login_required
 @require_POST
+@somente_administrador('Apenas administradores da empresa recusam acessos.')
 def recusar_vinculo(request, vinculo_id):
     """Remove um pedido de acesso pendente. A conta do usuário é preservada."""
-    if not _pode_administrar(request):
-        return HttpResponseForbidden('Apenas administradores da empresa recusam acessos.')
-
     vinculo = get_object_or_404(
         EmpresaUsuario, pk=vinculo_id, empresa=request.empresa, ativo=False)
     username = vinculo.usuario.username
@@ -83,8 +75,3 @@ def recusar_vinculo(request, vinculo_id):
 
     messages.info(request, f'Pedido de acesso de {username} foi recusado.')
     return redirect('equipe')
-
-
-def _pode_administrar(request):
-    return request.empresa is not None and (
-        request.empresa_vinculo is not None and request.empresa_vinculo.pode_administrar())

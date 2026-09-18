@@ -146,3 +146,35 @@ class AprovacaoDeFuncionarioTests(TestCase):
         self.assertEqual([v.pk for v in resposta.context['pendentes']], [self.pendente.pk])
         self.assertEqual(
             [v.usuario.username for v in resposta.context['membros']], ['ana'])
+
+
+class BarraLateralWhatsAppTests(TestCase):
+    """O item do WhatsApp na barra lateral.
+
+    Ele nasce escondido e o JavaScript decide qual dos três estados mostrar
+    conforme o status da sessão. O que se garante aqui é que os três cheguem ao
+    HTML e que o item saiba de qual empresa está falando — sem isso o
+    JavaScript desiste na primeira linha e a barra fica sem nada, sem dizer por quê.
+    """
+
+    def setUp(self):
+        self.usuario = get_user_model().objects.create_user(
+            username='dono', password='senha-segura')
+        self.usuario.empresas_vinculadas.all().delete()
+        self.empresa = Empresa.objects.create(nome='Despachante do Dono')
+        EmpresaUsuario.objects.create(
+            empresa=self.empresa, usuario=self.usuario,
+            papel=EmpresaUsuario.Papel.ADMINISTRADOR, ativo=True)
+        self.client.force_login(self.usuario)
+
+    def test_os_tres_estados_do_item_chegam_ao_html(self):
+        html = self.client.get(reverse('equipe')).content.decode()
+
+        self.assertIn('id="btn-vincular-whatsapp"', html)
+        self.assertIn('id="indicador-whatsapp-conectado"', html)
+        self.assertIn('id="btn-whatsapp-preparando"', html)
+
+    def test_o_item_carrega_a_empresa_ativa(self):
+        html = self.client.get(reverse('equipe')).content.decode()
+
+        self.assertIn(f'data-empresa-id="{self.empresa.id}"', html)

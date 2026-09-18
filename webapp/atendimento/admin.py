@@ -1,7 +1,18 @@
 from django.contrib import admin
 from django.utils import timezone
 from empresas.admin_utils import EmpresaAdminMixin
-from .models import Contato, Servico, Conversa, Mensagem, DocumentoExigido, DocumentoRecebido, Tarefa
+from .models import (
+    ConfiguracaoBot, Contato, Servico, Conversa, Mensagem, DocumentoExigido,
+    DocumentoRecebido, Tarefa,
+)
+
+
+@admin.register(ConfiguracaoBot)
+class ConfiguracaoBotAdmin(EmpresaAdminMixin, admin.ModelAdmin):
+    """Espelho da tela de chatbot, para suporte."""
+    list_display = ('empresa', 'ativo', 'max_tentativas_invalidas', 'atualizada_em')
+    list_filter = ('ativo',)
+    readonly_fields = ('atualizada_em',)
 
 
 @admin.register(Contato)
@@ -22,7 +33,7 @@ class DocumentoExigidoInline(admin.TabularInline):
 
 @admin.register(Servico)
 class ServicoAdmin(EmpresaAdminMixin, admin.ModelAdmin):
-    list_display = ('empresa', 'nome', 'ativo', 'qtd_documentos', 'criado_em')
+    list_display = ('empresa', 'nome', 'ordem', 'ativo', 'qtd_documentos', 'criado_em')
     list_filter = ('ativo',)
     inlines = [DocumentoExigidoInline]
 
