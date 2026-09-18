@@ -15,10 +15,12 @@ from atendimento.models import (
     Servico,
     Tarefa,
 )
-from integracao.models import EventoAtendimento, WahaSessao
+
+from atendimento.services.mensageria import enviar_mensagem
+from integracao.models import EventoAtendimento
 from integracao.services.auditoria import registrar_evento
-from integracao.services.conversas import criar_tarefa, registrar_mensagem_saida
-from integracao.services.waha_client import enviar_texto
+from integracao.services.conversas import criar_tarefa
+from integracao import anexos
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +56,27 @@ TEXTO_DOCUMENTO_PENDENTE = (
 TEXTO_SAIDA_HUMANA = ' Se preferir, responda {palavra} para falar com uma pessoa.'
 TEXTO_PROTOCOLO = '\nProtocolo: *{protocolo}*'
 
+# Abertura da resposta na triagem, quando o cliente manda algo que não é opção.
+# "Não entendi" para quem mandou um áudio dá a entender que o bot ouviu e não
+# compreendeu; o que ele precisa dizer é que não escuta.
+ABERTURA_POR_ANEXO = {
+    anexos.AUDIO: 'Não consigo ouvir áudios.',
+    anexos.VIDEO: 'Não consigo assistir a vídeos.',
+    anexos.FIGURINHA: 'Não consigo entender figurinhas.',
+    anexos.LOCALIZACAO: 'Não consigo usar a localização por aqui.',
+    anexos.CONTATO: 'Não consigo usar contatos por aqui.',
+}
+
+# O mesmo, durante a coleta: o cliente mandou um anexo, só que do tipo errado.
+RECUSA_POR_ANEXO = {
+    anexos.AUDIO: 'Não consigo ouvir áudios.\n\n',
+    anexos.VIDEO: 'Não consigo assistir a vídeos.\n\n',
+    anexos.FIGURINHA: 'Isso é uma figurinha, e eu preciso do documento.\n\n',
+    anexos.LOCALIZACAO: 'Recebi uma localização, e eu preciso do documento.\n\n',
+    anexos.CONTATO: 'Recebi um contato, e eu preciso do documento.\n\n',
+    anexos.OUTRO: 'Não consegui abrir esse anexo.\n\n',
+}
+
 
 def textos_do_bot(config):
     """Moldes de mensagem que a prévia da tela usa, com os textos da empresa."""
@@ -83,26 +106,8 @@ def _tarefa_em_aberto(conversa):
 
 def enviar_resposta_bot(conversa, texto):
     """Envia texto ao cliente pelo WAHA e registra a saída com auditoria."""
-    sessao = WahaSessao.objects.filter(
-        empresa=conversa.empresa, ativa=True).first()
-    if not sessao:
-        logger.error('Nenhuma sessão WAHA ativa para a empresa %s',
-                     conversa.empresa_id)
-        return False
-
-    destino = conversa.contato.chat_id or conversa.contato.wa_id
-    resultado = enviar_texto(
-        sessao=sessao.nome_sessao, chat_id=destino, texto=texto)
-    if not resultado['success']:
-        logger.error('Falha ao enviar resposta do bot: %s',
-                     resultado.get('error'))
-        return False
-
-    registrar_mensagem_saida(
-        conversa.empresa, conversa, texto, ator='bot',
-        wa_message_id=str((resultado.get('data') or {}).get('id', '')),
-    )
-    return True
+    return enviar_mensagem(
+        conversa, texto, origem=Mensagem.Origem.BOT, ator='bot')
 
 
 def servicos_do_menu(empresa):
@@ -144,9 +149,14 @@ def _opcao_escolhida(texto):
     return int(correspondencia.group(1)) if correspondencia else None
 
 
-def processar_mensagem(conversa, mensagem, *, tem_midia=False):
+def processar_mensagem(conversa, mensagem, *, anexo=None):
     """
     Ponto de entrada do bot para uma mensagem recém-registrada.
+
+    `anexo` é a categoria do que veio junto ('foto', 'figurinha', 'audio', …) ou
+    None para texto puro. Antes bastava "tem mídia", e com isso uma figurinha
+    era dada por documento recebido.
+
     Devolve True quando alguma resposta foi enviada ao cliente.
     """
     if conversa.modo != Conversa.Modo.BOT:
@@ -165,13 +175,13 @@ def processar_mensagem(conversa, mensagem, *, tem_midia=False):
             conversa, motivo='pedido_do_cliente', config=config)
 
     if conversa.estado == Conversa.Estado.TRIAGEM:
-        return _processar_triagem(conversa, mensagem, config)
+        return _processar_triagem(conversa, mensagem, config, anexo)
     if conversa.estado == Conversa.Estado.COLETANDO_DOCUMENTOS:
-        return _processar_coleta(conversa, mensagem, tem_midia, config)
+        return _processar_coleta(conversa, mensagem, anexo, config)
     return False
 
 
-def _processar_triagem(conversa, mensagem, config):
+def _processar_triagem(conversa, mensagem, config, anexo=None):
     # As opções visíveis dependem de onde a conversa está na árvore: menu
     # principal no começo, submenu depois que o cliente escolheu uma ramificação.
     servicos = opcoes_visiveis(conversa)
@@ -187,6 +197,11 @@ def _processar_triagem(conversa, mensagem, config):
         return enviar_resposta_bot(
             conversa, montar_menu(conversa, servicos, config=config))
 
+    # Anexo nunca é escolha de menu. Sem esta saída, a legenda de uma foto
+    # ("1 - achei essa") poderia virar uma opção escolhida sem querer.
+    if anexo:
+        return _nao_entendi(conversa, servicos, config, anexo=anexo)
+
     opcao = _opcao_escolhida(mensagem.conteudo)
     if opcao == len(servicos) + 1:
         return _transferir_para_humano(
@@ -196,7 +211,7 @@ def _processar_triagem(conversa, mensagem, config):
     return _nao_entendi(conversa, servicos, config)
 
 
-def _nao_entendi(conversa, servicos, config):
+def _nao_entendi(conversa, servicos, config, *, anexo=None):
     conversa.tentativas_invalidas += 1
     conversa.save(update_fields=['tentativas_invalidas', 'atualizada_em'])
 
@@ -207,9 +222,12 @@ def _nao_entendi(conversa, servicos, config):
     # Repetir o menu certo: se o cliente está num submenu, é o submenu que volta,
     # e sem a saudação, que só abre a conversa.
     dentro_de_submenu = bool(conversa.servico_id) and not conversa.servico.e_folha()
+    # Dizer "não entendi" para quem mandou um áudio soa como se o bot tivesse
+    # ouvido e não compreendido. Melhor admitir que ele não escuta.
+    abertura = ABERTURA_POR_ANEXO.get(anexo) or config.mensagem_nao_entendi
     return enviar_resposta_bot(
         conversa,
-        f'{config.mensagem_nao_entendi} '
+        f'{abertura} '
         + montar_menu(
             conversa, servicos, saudacao=False, config=config,
             pergunta=conversa.servico.pergunta_do_submenu() if dentro_de_submenu else None),
@@ -277,19 +295,24 @@ def _documentos_faltando(conversa):
     return [doc for doc in exigidos if doc.id not in recebidos]
 
 
-def _processar_coleta(conversa, mensagem, tem_midia, config):
+def _processar_coleta(conversa, mensagem, anexo, config):
     faltando = _documentos_faltando(conversa)
     if not faltando:
         return _concluir_coleta(conversa, config)
 
     atual = faltando[0]
-    if not tem_midia:
-        # Texto durante a coleta é quase sempre dúvida: repete a instrução em
-        # vez de dar o documento por recebido.
+
+    # Só foto e arquivo valem como documento. Figurinha, áudio, vídeo, contato e
+    # localização também são "mídia", e tratá-los como tal fazia o bot dar o CPF
+    # por recebido e seguir para o próximo — com o registro vazio.
+    if not anexos.vale_como_documento(anexo):
         palavras = config.lista_palavras_atendente()
         saida_humana = (
             TEXTO_SAIDA_HUMANA.format(palavra=palavras[0].upper()) if palavras else '')
-        return enviar_resposta_bot(conversa, TEXTO_DOCUMENTO_PENDENTE.format(
+        # Texto durante a coleta é quase sempre dúvida; anexo do tipo errado é
+        # engano. Nos dois casos a instrução volta, mas dizendo o que houve.
+        recusa = RECUSA_POR_ANEXO.get(anexo, '')
+        return enviar_resposta_bot(conversa, recusa + TEXTO_DOCUMENTO_PENDENTE.format(
             tipo=atual.tipo, instrucoes=atual.instrucoes, saida_humana=saida_humana))
 
     DocumentoRecebido.objects.create(

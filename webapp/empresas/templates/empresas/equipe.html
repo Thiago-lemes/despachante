@@ -56,6 +56,32 @@
     {% endif %}
 </section>
 
+{% if orfaos %}
+    <section class="mt-10">
+        <h2 class="section-title">Atendimentos presos com quem perdeu o acesso</h2>
+        <p class="prose-copy mt-2">
+            Estas conversas estão com pessoas sem vínculo ativo. Enquanto não forem repassadas,
+            ninguém consegue responder ao cliente.
+        </p>
+        <div class="mt-4 space-y-3">
+            {% for tarefa in orfaos %}
+                <div class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4">
+                    <div class="min-w-0">
+                        <p class="font-semibold text-slate-900">{{ tarefa.contato.nome_exibicao }}</p>
+                        <p class="text-sm text-slate-600">
+                            {{ tarefa.servico.nome|default:"sem serviço definido" }} ·
+                            com {{ tarefa.atendente.get_full_name|default:tarefa.atendente.username }}
+                        </p>
+                    </div>
+                    <a class="btn-primary !py-1.5 !text-sm" href="{% url 'conversa' tarefa.id %}">
+                        Abrir e repassar
+                    </a>
+                </div>
+            {% endfor %}
+        </div>
+    </section>
+{% endif %}
+
 <section class="mt-10">
     <h2 class="section-title">Com acesso liberado</h2>
     <div class="mt-4 overflow-x-auto">
@@ -65,6 +91,7 @@
                     <th class="py-2 pr-4">Usuário</th>
                     <th class="py-2 pr-4">E-mail</th>
                     <th class="py-2 pr-4">Papel</th>
+                    <th class="py-2 pr-4">Atendendo</th>
                 </tr>
             </thead>
             <tbody>
@@ -76,9 +103,14 @@
                         </td>
                         <td class="py-2 pr-4 text-slate-600">{{ vinculo.usuario.email|default:"—" }}</td>
                         <td class="py-2 pr-4 text-slate-600">{{ vinculo.get_papel_display }}</td>
+                        <td class="py-2 pr-4 text-slate-600">
+                            {% if vinculo.atendimentos_abertos %}
+                                {{ vinculo.atendimentos_abertos }} conversa{{ vinculo.atendimentos_abertos|pluralize }}
+                            {% else %}—{% endif %}
+                        </td>
                     </tr>
                 {% empty %}
-                    <tr><td colspan="3" class="py-3 text-slate-500">Nenhum membro ativo.</td></tr>
+                    <tr><td colspan="4" class="py-3 text-slate-500">Nenhum membro ativo.</td></tr>
                 {% endfor %}
             </tbody>
         </table>

@@ -18,19 +18,58 @@ ESTADOS_ATIVOS = [
 ]
 
 # Conversa parada por dois dias é assunto encerrado: a próxima mensagem começa
-# um atendimento novo, em vez de retomar um menu de anteontem.
+# um atendimento novo, em vez de retomar um menu de anteontem. É só o padrão —
+# cada empresa ajusta em ConfiguracaoBot.horas_ate_expirar.
 HORAS_ATE_EXPIRAR = 48
+
+
+def _tarefa_assumida(conversa):
+    """Card que alguém puxou e ainda está atendendo."""
+    return Tarefa.objects.filter(
+        conversa=conversa, status=Tarefa.Status.EM_ATENDIMENTO).first()
+
+
+def _tarefa_na_fila(conversa):
+    """Card que o bot abriu e ninguém puxou."""
+    return Tarefa.objects.filter(
+        conversa=conversa, status=Tarefa.Status.ABERTA).first()
 
 
 def _expirou(conversa):
     """
-    Só expira conversa que ainda está com o bot. Atendimento já nas mãos de uma
-    pessoa não pode ser encerrado por silêncio do cliente.
+    Silêncio do cliente encerra a conversa — mas nunca tira um atendimento das
+    mãos de quem já o assumiu. Enquanto o card estiver na fila, ou a conversa
+    ainda for do bot, o prazo vale; assumido, não expira nunca.
     """
-    if conversa.modo != Conversa.Modo.BOT:
+    if _tarefa_assumida(conversa):
         return False
-    limite = timezone.now() - timedelta(hours=HORAS_ATE_EXPIRAR)
+    limite = timezone.now() - timedelta(hours=_horas_ate_expirar(conversa.empresa))
     return conversa.atualizada_em < limite
+
+
+def _horas_ate_expirar(empresa):
+    # Import local: atendimento.services.bot importa este módulo, e o caminho
+    # inverso no topo do arquivo fecharia o ciclo.
+    from atendimento.models import ConfiguracaoBot
+    return ConfiguracaoBot.para(empresa).horas_ate_expirar
+
+
+def encerrar_conversa(conversa, *, motivo, ator='sistema'):
+    """Fecha a conversa para que a próxima mensagem comece um atendimento novo.
+
+    Sem isto, uma conversa em modo humano fica viva para sempre: o bot não
+    responde e ninguém é avisado, então a mensagem do cliente que volta depois
+    do card fechado morre no banco.
+    """
+    if conversa.estado == Conversa.Estado.ENCERRADA:
+        return False
+    conversa.estado = Conversa.Estado.ENCERRADA
+    conversa.save(update_fields=['estado', 'atualizada_em'])
+    registrar_evento(
+        conversa.empresa, EventoAtendimento.Tipo.CONVERSA_ESTADO,
+        conversa=conversa, ator=ator, payload={'encerrada': motivo},
+    )
+    return True
 
 
 def obter_ou_criar_conversa(empresa, contato, servico=None):
@@ -40,8 +79,15 @@ def obter_ou_criar_conversa(empresa, contato, servico=None):
         estado__in=ESTADOS_ATIVOS,
     ).order_by('-atualizada_em').first()
     if conversa and _expirou(conversa):
-        conversa.estado = Conversa.Estado.ENCERRADA
-        conversa.save(update_fields=['estado', 'atualizada_em'])
+        # O card que ficou na fila aponta para uma conversa morta. Deixá-lo lá
+        # faria o mesmo contato aparecer duas vezes no Kanban assim que o bot
+        # abrisse o card da conversa nova.
+        na_fila = _tarefa_na_fila(conversa)
+        if na_fila:
+            na_fila.status = Tarefa.Status.CANCELADA
+            na_fila.concluida_em = timezone.now()
+            na_fila.save(update_fields=['status', 'concluida_em'])
+        encerrar_conversa(conversa, motivo='inatividade')
         conversa = None
     if conversa:
         return conversa, False
@@ -110,11 +156,14 @@ def registrar_mensagem_entrada(empresa, *, wa_id, conteudo, wa_message_id='',
 
 
 def registrar_mensagem_saida(empresa, conversa, conteudo, *, ator='n8n',
-                             wa_message_id=''):
+                             wa_message_id='', origem=Mensagem.Origem.BOT,
+                             autor=None):
     mensagem = Mensagem.objects.create(
         empresa=empresa,
         conversa=conversa,
         direcao=Mensagem.Direcao.SAIDA,
+        origem=origem,
+        autor=autor,
         conteudo=conteudo,
         wa_message_id=wa_message_id or '',
     )
@@ -124,6 +173,38 @@ def registrar_mensagem_saida(empresa, conversa, conteudo, *, ator='n8n',
         payload={'conteudo': conteudo[:500]},
     )
     return mensagem
+
+
+def registrar_mensagem_do_celular(empresa, *, wa_id, conteudo, wa_message_id=''):
+    """Resposta digitada no celular da empresa, devolvida pelo WAHA como `fromMe`.
+
+    Entra no histórico para o atendente não responder em cima de uma resposta
+    que já foi dada — mas **não aciona o bot**, senão ele responderia ao eco das
+    próprias mensagens.
+
+    Só registra em conversa que já existe: uma saída para número desconhecido
+    pode ser qualquer conversa pessoal do aparelho, e criar contato a partir
+    dela encheria o sistema de gente que nunca pediu nada.
+    """
+    if wa_message_id and Mensagem.objects.filter(
+            empresa=empresa, wa_message_id=wa_message_id).exists():
+        # Eco do que o próprio sistema acabou de enviar.
+        return None, False
+
+    contato = Contato.objects.filter(empresa=empresa, wa_id=wa_id).first()
+    if not contato:
+        return None, False
+
+    conversa = Conversa.objects.filter(
+        empresa=empresa, contato=contato, estado__in=ESTADOS_ATIVOS,
+    ).order_by('-atualizada_em').first()
+    if not conversa:
+        return None, False
+
+    mensagem = registrar_mensagem_saida(
+        empresa, conversa, conteudo, ator='celular',
+        wa_message_id=wa_message_id, origem=Mensagem.Origem.CELULAR)
+    return mensagem, True
 
 
 def obter_conversa(empresa, conversa_id):

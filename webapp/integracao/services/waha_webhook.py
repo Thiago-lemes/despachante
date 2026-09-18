@@ -4,9 +4,11 @@ import re
 from atendimento.models import Conversa
 from atendimento.services.bot import processar_mensagem
 
+from integracao import anexos
 from integracao.models import WahaSessao
 from integracao.services.conversas import (
     processar_webhook_idempotente,
+    registrar_mensagem_do_celular,
     registrar_mensagem_entrada,
 )
 from integracao.services.auditoria import registrar_evento
@@ -81,16 +83,6 @@ def _e_do_proprio_sistema(payload: dict) -> bool:
     return bool(dados.get('fromMe') or chave.get('fromMe'))
 
 
-def _tem_midia(payload: dict) -> bool:
-    """Foto, PDF ou áudio anexado — é assim que o cliente envia documento."""
-    if payload.get('hasMedia'):
-        return True
-    if payload.get('mediaUrl') or payload.get('media'):
-        return True
-    mimetype = payload.get('mimetype') or ''
-    return bool(mimetype) and not mimetype.startswith('text/')
-
-
 def _extrair_mensagem_waha(corpo: dict):
     """Interpreta payloads comuns do WAHA (message / message.any)."""
     evento = corpo.get('event', '')
@@ -106,10 +98,14 @@ def _extrair_mensagem_waha(corpo: dict):
     if not isinstance(payload, dict):
         return None
 
-    if _e_do_proprio_sistema(payload):
-        return None
+    # Mensagem que saiu do próprio aparelho não some mais: ela é registrada como
+    # saída do "celular da empresa" (sem acionar o bot), para o atendente não
+    # responder em cima de uma resposta que já foi dada.
+    do_proprio_sistema = _e_do_proprio_sistema(payload)
 
-    from_id = payload.get('from') or payload.get('author') or ''
+    # Nela, quem interessa é o destinatário — 'from' é o número da empresa.
+    from_id = (payload.get('to') if do_proprio_sistema
+               else (payload.get('from') or payload.get('author'))) or ''
     if from_id.endswith('@g.us'):
         return None
 
@@ -126,13 +122,14 @@ def _extrair_mensagem_waha(corpo: dict):
     return {
         'wa_id': wa_id,
         'chat_id': from_id,
+        'do_proprio_sistema': do_proprio_sistema,
         'conteudo': str(texto),
         'wa_message_id': msg_id,
         'nome_contato': _extrair_nome(payload),
         'telefone': _extrair_telefone(payload, from_id),
         'tipo_midia': payload.get('mimetype') or payload.get('type') or 'text',
         'media_url': payload.get('mediaUrl') or payload.get('media') or '',
-        'tem_midia': _tem_midia(payload),
+        'anexo': anexos.classificar(payload),
     }
 
 
@@ -147,7 +144,7 @@ def processar_webhook_waha(sessao: WahaSessao, corpo: dict, payload_bruto: bytes
         return {'status': 'duplicado', 'id': id_evento}
 
     mensagem = _extrair_mensagem_waha(corpo)
-    if not mensagem or not (mensagem['conteudo'] or mensagem['tem_midia']):
+    if not mensagem or not (mensagem['conteudo'] or mensagem['anexo']):
         registrar_evento(
             sessao.empresa, EventoAtendimento.Tipo.WEBHOOK_RECEBIDO,
             ator='waha', correlation_id=id_evento,
@@ -156,8 +153,24 @@ def processar_webhook_waha(sessao: WahaSessao, corpo: dict, payload_bruto: bytes
         return {'status': 'ignorado', 'motivo': 'sem mensagem de texto'}
 
     # Um anexo sem legenda não tem texto, mas é justamente como o cliente
-    # responde ao pedido de documento — precisa virar mensagem mesmo assim.
-    conteudo = mensagem['conteudo'] or '[arquivo enviado pelo cliente]'
+    # responde ao pedido de documento — precisa virar mensagem mesmo assim. E o
+    # histórico diz o que era: "[figurinha]" e "[foto]" contam histórias bem
+    # diferentes para quem vai atender.
+    descricao = anexos.descrever(mensagem['anexo'])
+    conteudo = mensagem['conteudo'] or descricao
+
+    if mensagem['do_proprio_sistema']:
+        registrada, gravou = registrar_mensagem_do_celular(
+            sessao.empresa,
+            wa_id=mensagem['wa_id'],
+            conteudo=mensagem['conteudo'] or descricao,
+            wa_message_id=mensagem['wa_message_id'],
+        )
+        if not gravou:
+            return {'status': 'ignorado',
+                    'motivo': 'eco do próprio envio ou contato sem conversa'}
+        return {'status': 'ok', 'mensagem_id': registrada.id,
+                'conversa_id': registrada.conversa_id, 'do_celular': True}
 
     msg, criada = registrar_mensagem_entrada(
         sessao.empresa,
@@ -184,7 +197,7 @@ def processar_webhook_waha(sessao: WahaSessao, corpo: dict, payload_bruto: bytes
     if criada and conversa.modo == Conversa.Modo.BOT:
         try:
             resultado['bot_respondeu'] = processar_mensagem(
-                conversa, msg, tem_midia=mensagem['tem_midia'])
+                conversa, msg, anexo=mensagem['anexo'])
         except Exception:
             # Falha do bot não pode devolver erro ao WAHA: ele reentregaria o
             # evento e a mensagem já está registrada.

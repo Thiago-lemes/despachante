@@ -151,6 +151,24 @@
     window.setInterval(atualizarTarefasNovas, 5000);
   }
 
+  // Conversas que esperam resposta do proprio usuario. O intervalo e maior que
+  // o dos outros badges porque aqui a resposta e humana: 5s so geraria consulta.
+  const minhasLink = document.querySelector('[data-minhas-conversas-url]');
+  const minhasBadge = document.querySelector('[data-minhas-conversas-badge]');
+  if (minhasLink && minhasBadge) {
+    const atualizarMinhasConversas = async () => {
+      try {
+        const response = await fetch(minhasLink.dataset.minhasConversasUrl, {headers: {'X-Requested-With': 'XMLHttpRequest'}});
+        if (!response.ok) return;
+        const data = await response.json();
+        minhasBadge.textContent = data.total > 99 ? '99+' : data.total;
+        minhasBadge.classList.toggle('hidden', !data.total);
+      } catch (_) { /* A proxima consulta tenta novamente. */ }
+    };
+    atualizarMinhasConversas();
+    window.setInterval(atualizarMinhasConversas, 20000);
+  }
+
   const pendingDoc = document.querySelector('[data-document-pending]');
   if (pendingDoc) {
     window.setInterval(async () => {

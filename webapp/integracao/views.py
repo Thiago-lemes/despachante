@@ -13,6 +13,16 @@ from .services.waha_service import WahaService
 logger = logging.getLogger(__name__)
 
 
+# Quantas falhas seguidas antes de concluir que a credencial morreu e pedir um
+# pareamento novo. Uma só pode ser tropeço do engine, que o 'restart' resolve.
+FALHAS_ATE_NOVO_PAREAMENTO = 2
+
+# Estados que significam progresso de verdade. 'STARTING' fica de fora de
+# propósito: o ciclo de uma sessão quebrada é FAILED → STARTING → FAILED, e
+# zerar o contador no STARTING faria o laço nunca escalar para o novo pareamento.
+ESTADOS_DE_PROGRESSO = ('SCAN_QR_CODE', 'WORKING', 'STOPPED')
+
+
 def _persistir_status(sessao_obj, status):
     """Mantém no banco o último status conhecido da sessão."""
     if not status or status == sessao_obj.status:
@@ -22,6 +32,20 @@ def _persistir_status(sessao_obj, status):
     sessao_obj.status = status
     sessao_obj.status_atualizado_em = timezone.now()
     sessao_obj.save(update_fields=['status', 'status_atualizado_em', 'atualizada_em'])
+
+
+def _contar_falha(sessao_obj, status):
+    """Acompanha a insistência da falha e diz se é hora de reparear."""
+    if status == 'FAILED':
+        sessao_obj.tentativas_recuperacao += 1
+    elif status in ESTADOS_DE_PROGRESSO:
+        if not sessao_obj.tentativas_recuperacao:
+            return False
+        sessao_obj.tentativas_recuperacao = 0
+    else:
+        return sessao_obj.tentativas_recuperacao >= FALHAS_ATE_NOVO_PAREAMENTO
+    sessao_obj.save(update_fields=['tentativas_recuperacao', 'atualizada_em'])
+    return sessao_obj.tentativas_recuperacao >= FALHAS_ATE_NOVO_PAREAMENTO
 
 
 @require_GET
@@ -58,6 +82,10 @@ def gerar_qr_code_empresa(request, empresa_id):
 
         status_atual = WahaService.obter_status_sessao(nome_sessao)
         _persistir_status(sessao_obj, status_atual)
+        # Contar antes do desvio de 'WORKING': a sessão que conecta depois de
+        # falhar precisa zerar o contador, senão a próxima falha isolada já
+        # pediria um novo pareamento sem necessidade.
+        precisa_reparear = _contar_falha(sessao_obj, status_atual)
 
         if status_atual == 'WORKING':
             return JsonResponse({'status': 'conectado'})
@@ -65,7 +93,9 @@ def gerar_qr_code_empresa(request, empresa_id):
         # Cria/inicia/reinicia conforme o estado atual. Não mexe na sessão
         # quando ela já está subindo, senão o polling do front-end reiniciaria
         # tudo a cada poucos segundos e ela nunca terminaria de subir.
-        WahaService.garantir_sessao_ativa(nome_sessao, url_webhook, status_atual)
+        WahaService.garantir_sessao_ativa(
+            nome_sessao, url_webhook, status_atual,
+            forcar_novo_pareamento=precisa_reparear)
 
         # O QR só existe depois que a sessão chega em SCAN_QR_CODE. Em
         # 'STARTING' a chamada ficaria pendurada esperando — melhor devolver

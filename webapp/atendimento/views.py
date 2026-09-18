@@ -4,17 +4,26 @@ import logging
 from django import template
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.db.models import Count
+from django.db.models import Count, OuterRef, Subquery
 from django.http import HttpResponseForbidden, JsonResponse
 from django.shortcuts import redirect, render, get_object_or_404
 from django.utils import timezone
 from django.views.decorators.http import require_POST
-from empresas.models import Empresa
+from empresas.models import Empresa, EmpresaUsuario
 from empresas.permissoes import somente_administrador
 
+from integracao.services.conversas import encerrar_conversa
+
 from .forms import ConfiguracaoBotForm, DocumentoExigidoFormSet, ServicoForm
-from .models import ConfiguracaoBot, Conversa, Tarefa, Servico
+from .models import ConfiguracaoBot, Conversa, Mensagem, Tarefa, Servico, nome_curto
 from .services import bot
+from .services.atendimento import (
+    assumir_tarefa,
+    atribuir_tarefa,
+    pode_responder,
+    responder,
+    tarefa_aberta_da_conversa,
+)
 
 register = template.Library()
 
@@ -106,6 +115,15 @@ def atualizar_status_tarefa(request):
     if novo_status not in Tarefa.Status.values:
         return JsonResponse({'status': 'erro', 'erro': 'Status inválido.'}, status=400)
 
+    if novo_status == Tarefa.Status.ABERTA:
+        # Card assumido não volta para a fila: é isso que garante que só o dono
+        # fale com o cliente. Para passar adiante existe a transferência.
+        return JsonResponse({
+            'status': 'erro',
+            'erro': 'Um atendimento assumido não volta para a fila. '
+                    'Use "atribuir para" no card para passá-lo a outra pessoa.',
+        }, status=409)
+
     empresa = _empresa_do_usuario(request)
     if not empresa:
         return JsonResponse({'status': 'erro', 'erro': 'Nenhuma empresa ativa.'}, status=403)
@@ -113,22 +131,33 @@ def atualizar_status_tarefa(request):
     # Filtrar pela empresa impede mover tarefa de outro tenant sabendo o id.
     tarefa = get_object_or_404(Tarefa, id=tarefa_id, empresa=empresa)
 
+    if tarefa.status == Tarefa.Status.ABERTA:
+        assumida = assumir_tarefa(tarefa, request.user)
+        if assumida is None:
+            tarefa.refresh_from_db()
+            return JsonResponse({
+                'status': 'erro',
+                'erro': f'{nome_curto(tarefa.atendente)} assumiu este atendimento '
+                        'primeiro.' if tarefa.atendente else
+                        'Este atendimento já saiu da fila.',
+                'atendente': nome_curto(tarefa.atendente),
+            }, status=409)
+        tarefa = assumida
+        if novo_status == Tarefa.Status.EM_ATENDIMENTO:
+            return _resposta_da_tarefa(tarefa)
+
+    # Daqui em diante o card já tem dono, e só ele o move. Quem quiser mexer no
+    # card de outra pessoa passa pela transferência, que deixa rastro.
+    if tarefa.atendente_id and tarefa.atendente_id != request.user.id:
+        return JsonResponse({
+            'status': 'erro',
+            'erro': f'Este atendimento é de {nome_curto(tarefa.atendente)}. '
+                    'Assuma o card antes de movê-lo.',
+        }, status=403)
+
     agora = timezone.now()
     campos = ['status']
     tarefa.status = novo_status
-
-    if novo_status == Tarefa.Status.ABERTA:
-        # Voltar para "Aberta" devolve a tarefa à fila, sem dono.
-        tarefa.atendente = None
-        tarefa.assumida_em = None
-        campos += ['atendente', 'assumida_em']
-    else:
-        # Quem move a tarefa assume o atendimento.
-        tarefa.atendente = request.user
-        campos.append('atendente')
-        if not tarefa.assumida_em:
-            tarefa.assumida_em = agora
-            campos.append('assumida_em')
 
     if novo_status in (Tarefa.Status.CONCLUIDA, Tarefa.Status.CANCELADA):
         tarefa.concluida_em = agora
@@ -139,20 +168,231 @@ def atualizar_status_tarefa(request):
 
     tarefa.save(update_fields=campos)
 
-    # Assumir o card cala o bot naquela conversa. Devolver para "Aberta" não o
-    # religa: quem já foi atendido por uma pessoa não volta para a triagem
-    # automática no meio do assunto.
-    if novo_status != Tarefa.Status.ABERTA:
-        conversa = tarefa.conversa
-        if conversa.modo != Conversa.Modo.HUMANO:
-            conversa.modo = Conversa.Modo.HUMANO
-            conversa.save(update_fields=['modo', 'atualizada_em'])
+    if novo_status in (Tarefa.Status.CONCLUIDA, Tarefa.Status.CANCELADA):
+        # Fechar o card encerra a conversa. Sem isso ela ficaria viva em modo
+        # humano para sempre: o bot não responde e ninguém é avisado, então a
+        # mensagem do cliente que volta depois morreria no banco.
+        encerrar_conversa(
+            tarefa.conversa, motivo=f'tarefa_{novo_status}',
+            ator=request.user.username)
 
-    atendente = tarefa.atendente
+    return _resposta_da_tarefa(tarefa)
+
+
+def _resposta_da_tarefa(tarefa):
     return JsonResponse({
         'status': 'ok',
         'novo_status': tarefa.status,
-        'atendente': atendente.get_full_name() or atendente.username if atendente else '',
+        'atendente': nome_curto(tarefa.atendente),
+    })
+
+
+# --- Atendimento humano ------------------------------------------------------
+# O WhatsApp entrega tudo por um número só e não sabe o que é um atendente.
+# Quem pode falar com quem se decide aqui.
+
+def _minhas_tarefas(empresa, usuario):
+    """Atendimentos que estão comigo, com a última mensagem de cada um.
+
+    A última mensagem é o que diz se a bola está com o cliente ou comigo —
+    carregá-la por subconsulta evita uma ida ao banco por conversa na lista.
+    """
+    ultima = Mensagem.objects.filter(
+        conversa=OuterRef('conversa')).order_by('-criada_em', '-id')
+    return (
+        Tarefa.objects
+        .filter(empresa=empresa, atendente=usuario,
+                status=Tarefa.Status.EM_ATENDIMENTO)
+        .select_related('contato', 'servico', 'conversa')
+        .annotate(
+            ultima_direcao=Subquery(ultima.values('direcao')[:1]),
+            ultima_conteudo=Subquery(ultima.values('conteudo')[:1]),
+            ultima_em=Subquery(ultima.values('criada_em')[:1]),
+        )
+        .order_by('-ultima_em')
+    )
+
+
+@login_required
+def minhas_conversas(request):
+    """Só os atendimentos do usuário logado — o Kanban mostra os da empresa."""
+    empresa = _empresa_do_usuario(request)
+    if not empresa:
+        return HttpResponseForbidden('Nenhuma empresa ativa está vinculada a este usuário.')
+
+    tarefas = list(_minhas_tarefas(empresa, request.user))
+    # Última mensagem de entrada = o cliente falou e ainda não foi respondido.
+    for tarefa in tarefas:
+        tarefa.aguardando_resposta = (
+            tarefa.ultima_direcao == Mensagem.Direcao.ENTRADA)
+
+    return render(request, 'atendimento/minhas_conversas.html', {
+        'tarefas': tarefas,
+        'aguardando': sum(1 for t in tarefas if t.aguardando_resposta),
+    })
+
+
+@login_required
+def minhas_conversas_status(request):
+    """Quantas das minhas conversas esperam resposta, para o badge do menu."""
+    empresa = _empresa_do_usuario(request)
+    total = 0
+    if empresa:
+        total = _minhas_tarefas(empresa, request.user).filter(
+            ultima_direcao=Mensagem.Direcao.ENTRADA).count()
+    return JsonResponse({'total': total})
+
+
+@login_required
+def conversa(request, tarefa_id):
+    """Histórico do atendimento, com campo de resposta só para o dono do card."""
+    empresa = _empresa_do_usuario(request)
+    if not empresa:
+        return HttpResponseForbidden('Nenhuma empresa ativa está vinculada a este usuário.')
+
+    tarefa = get_object_or_404(
+        Tarefa.objects.select_related('conversa', 'contato', 'servico', 'atendente'),
+        id=tarefa_id, empresa=empresa)
+
+    return render(request, 'atendimento/conversa.html', {
+        'tarefa': tarefa,
+        'conversa': tarefa.conversa,
+        'linha_do_tempo': _linha_do_tempo(tarefa.conversa),
+        # O polling compara contagem de mensagens, não da linha do tempo, que
+        # também tem documentos — comparar coisas diferentes recarregaria sempre.
+        'total_mensagens': tarefa.conversa.mensagens.count(),
+        'pode_responder': pode_responder(tarefa.conversa, request.user),
+        'na_fila': tarefa.status == Tarefa.Status.ABERTA,
+        'colegas': _colegas(empresa, request.user),
+    })
+
+
+def _linha_do_tempo(conversa_obj):
+    """Mensagens e documentos recebidos numa sequência só, em ordem.
+
+    Documento numa lista à parte obriga o atendente a cruzar horários na mão
+    para saber o que o cliente mandou em resposta a quê.
+    """
+    itens = [
+        {'tipo': 'mensagem', 'quando': m.criada_em, 'mensagem': m}
+        for m in conversa_obj.mensagens.select_related('autor')
+    ]
+    itens += [
+        {'tipo': 'documento', 'quando': d.criado_em, 'documento': d}
+        for d in conversa_obj.documentos_recebidos.select_related('documento_exigido')
+    ]
+    itens.sort(key=lambda item: item['quando'])
+    return itens
+
+
+def _colegas(empresa, usuario):
+    """Quem pode receber um atendimento: vínculo ativo, menos o próprio."""
+    return [
+        vinculo.usuario for vinculo in EmpresaUsuario.objects
+        .filter(empresa=empresa, ativo=True)
+        .exclude(usuario=usuario)
+        .select_related('usuario')
+        .order_by('usuario__first_name', 'usuario__username')
+    ]
+
+
+@require_POST
+@login_required
+def conversa_responder(request, tarefa_id):
+    empresa = _empresa_do_usuario(request)
+    if not empresa:
+        return JsonResponse({'status': 'erro', 'erro': 'Nenhuma empresa ativa.'}, status=403)
+
+    tarefa = get_object_or_404(Tarefa, id=tarefa_id, empresa=empresa)
+    texto = (request.POST.get('texto') or '').strip()
+    if not texto:
+        return JsonResponse({'status': 'erro', 'erro': 'Escreva a mensagem.'}, status=400)
+
+    if not pode_responder(tarefa.conversa, request.user):
+        dono = nome_curto(tarefa.atendente)
+        return JsonResponse({
+            'status': 'erro',
+            'erro': f'Este atendimento é de {dono}.' if dono else
+                    'Assuma o atendimento para poder responder.',
+        }, status=403)
+
+    if not responder(tarefa.conversa, request.user, texto):
+        # Não gravar como enviada é o ponto: o atendente precisa ver que não saiu.
+        return JsonResponse({
+            'status': 'erro',
+            'erro': 'A mensagem não foi enviada. Verifique o vínculo do WhatsApp.',
+        }, status=502)
+
+    return redirect('conversa', tarefa_id=tarefa.id)
+
+
+@require_POST
+@login_required
+def tarefa_assumir(request, tarefa_id):
+    """Puxa o card para si — da fila (com trava) ou de outro atendente."""
+    empresa = _empresa_do_usuario(request)
+    if not empresa:
+        return HttpResponseForbidden('Nenhuma empresa ativa.')
+
+    tarefa = get_object_or_404(Tarefa, id=tarefa_id, empresa=empresa)
+
+    if tarefa.status == Tarefa.Status.ABERTA:
+        if assumir_tarefa(tarefa, request.user) is None:
+            tarefa.refresh_from_db()
+            messages.warning(
+                request,
+                f'{nome_curto(tarefa.atendente)} assumiu este atendimento primeiro.')
+        else:
+            messages.success(request, 'Atendimento assumido.')
+    elif tarefa.atendente_id == request.user.id:
+        messages.info(request, 'Este atendimento já é seu.')
+    else:
+        anterior = nome_curto(tarefa.atendente)
+        atribuir_tarefa(tarefa, request.user, por=request.user)
+        messages.success(
+            request,
+            f'Atendimento assumido{f" de {anterior}" if anterior else ""}.')
+
+    return redirect('conversa', tarefa_id=tarefa.id)
+
+
+@require_POST
+@login_required
+def tarefa_atribuir(request, tarefa_id):
+    """Entrega o atendimento a um colega — inclusive o de quem saiu da empresa."""
+    empresa = _empresa_do_usuario(request)
+    if not empresa:
+        return HttpResponseForbidden('Nenhuma empresa ativa.')
+
+    tarefa = get_object_or_404(Tarefa, id=tarefa_id, empresa=empresa)
+
+    # O destino tem que ter vínculo ativo: atribuir para quem não entra mais no
+    # sistema é o problema que este requisito veio resolver, não criar.
+    vinculo = EmpresaUsuario.objects.filter(
+        empresa=empresa, usuario_id=request.POST.get('usuario_id'), ativo=True
+    ).select_related('usuario').first()
+    if not vinculo:
+        messages.error(request, 'Escolha alguém com acesso ativo à empresa.')
+        return redirect('conversa', tarefa_id=tarefa.id)
+
+    atribuir_tarefa(tarefa, vinculo.usuario, por=request.user)
+    messages.success(
+        request, f'Atendimento atribuído a {nome_curto(vinculo.usuario)}.')
+    return redirect('conversa', tarefa_id=tarefa.id)
+
+
+@login_required
+def conversa_novidades(request, tarefa_id):
+    """Quantas mensagens a conversa tem agora, para a tela se atualizar sozinha."""
+    empresa = _empresa_do_usuario(request)
+    if not empresa:
+        return JsonResponse({'total': 0})
+
+    tarefa = get_object_or_404(Tarefa, id=tarefa_id, empresa=empresa)
+    return JsonResponse({
+        'total': tarefa.conversa.mensagens.count(),
+        'status': tarefa.status,
+        'atendente': nome_curto(tarefa.atendente),
     })
 
 

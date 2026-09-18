@@ -20,14 +20,16 @@ def _headers():
 class WahaService:
 
     @staticmethod
-    def garantir_sessao_ativa(nome_sessao: str, url_webhook: str, status_atual: str):
+    def garantir_sessao_ativa(nome_sessao: str, url_webhook: str, status_atual: str,
+                              *, forcar_novo_pareamento: bool = False):
         """
         Leva a sessão até um estado em que o QR Code possa ser gerado, de acordo
         com o estado atual dela no WAHA:
 
         - UNKNOWN (não existe) → cria a sessão (já sobe iniciada).
         - FAILED               → 'restart' (start não recupera: responde
-                                 "Session is already running" e trava).
+                                 "Session is already running" e trava), ou
+                                 'logout' + 'start' quando a credencial morreu.
         - STOPPED              → 'start'.
         - STARTING/SCAN_QR_CODE/WORKING → não faz nada, já está a caminho.
         """
@@ -36,6 +38,26 @@ class WahaService:
                 return
 
             if status_atual == 'FAILED':
+                if forcar_novo_pareamento:
+                    # 'restart' só recupera tropeço do engine. Quando o aparelho
+                    # foi desvinculado no celular, a credencial guardada está
+                    # morta: a sessão sobe, o WhatsApp recusa e ela volta para
+                    # FAILED em segundos — e como a tela repete a chamada a cada
+                    # poucos segundos, isso vira laço infinito sem nunca gerar QR.
+                    # 'logout' apaga a credencial e 'start' pede um pareamento novo.
+                    logger.info(
+                        'Sessão WAHA %s falhando em série: apagando credencial '
+                        'e pedindo novo pareamento.', nome_sessao)
+                    requests.post(
+                        f"{WAHA_BASE_URL}/api/sessions/{nome_sessao}/logout",
+                        headers=_headers(), timeout=TIMEOUT_PADRAO,
+                    )
+                    requests.post(
+                        f"{WAHA_BASE_URL}/api/sessions/{nome_sessao}/start",
+                        headers=_headers(), timeout=TIMEOUT_PADRAO,
+                    )
+                    return
+
                 logger.info('Sessão WAHA %s em FAILED, reiniciando.', nome_sessao)
                 requests.post(
                     f"{WAHA_BASE_URL}/api/sessions/{nome_sessao}/restart",

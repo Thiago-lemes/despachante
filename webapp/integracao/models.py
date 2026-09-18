@@ -26,6 +26,10 @@ class WahaSessao(models.Model):
     status = models.CharField(
         max_length=20, choices=Status.choices, default=Status.DESCONHECIDO)
     status_atualizado_em = models.DateTimeField(null=True, blank=True)
+    # Quantas vezes seguidas encontramos a sessão em FAILED. Serve para separar
+    # a falha passageira do engine — que um 'restart' resolve — da credencial
+    # morta, que só um novo pareamento resolve. Ver WahaService.
+    tentativas_recuperacao = models.PositiveSmallIntegerField(default=0)
     criada_em = models.DateTimeField(auto_now_add=True)
     atualizada_em = models.DateTimeField(auto_now=True)
 
@@ -84,6 +88,7 @@ class EventoAtendimento(models.Model):
         DOCUMENTO_ANALISADO = 'documento.analisado', 'Documento analisado'
         DOCUMENTO_REVISADO = 'documento.revisado', 'Documento revisado'
         TAREFA_CRIADA = 'tarefa.criada', 'Tarefa criada'
+        TAREFA_ATRIBUIDA = 'tarefa.atribuida', 'Tarefa atribuída'
         WEBHOOK_RECEBIDO = 'webhook.recebido', 'Webhook recebido'
         ERRO = 'erro', 'Erro'
 

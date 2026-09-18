@@ -1,0 +1,149 @@
+{% extends 'documentos/base.html' %}
+{% block titulo %}{{ tarefa.contato.nome_exibicao }}{% endblock %}
+{% block conteudo %}
+
+<div class="page-heading">
+    <div class="min-w-0">
+        <p class="eyebrow">Atendimento · {{ tarefa.servico.caminho|default:"sem serviço definido" }}</p>
+        <h1 class="page-title">{{ tarefa.contato.nome_exibicao }}</h1>
+        <p class="page-subtitle">
+            {{ tarefa.contato.telefone_exibicao }} ·
+            protocolo <span class="font-data font-bold">{{ tarefa.id|stringformat:"s"|slice:":8"|upper }}</span> ·
+            {{ tarefa.get_status_display }}
+            {% if tarefa.atendente %}
+                · com <span class="font-semibold text-ink">{{ tarefa.atendente.get_full_name|default:tarefa.atendente.username }}</span>
+            {% else %}
+                · <span class="font-semibold text-amber-700">na fila</span>
+            {% endif %}
+        </p>
+    </div>
+    <a class="btn-secondary" href="{% url 'kanban_tarefas' %}">Voltar ao Kanban</a>
+</div>
+
+<div class="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_280px]">
+    <section class="surface">
+        <div class="max-h-[60vh] space-y-3 overflow-y-auto pr-1" data-historico>
+            {% for item in linha_do_tempo %}
+                {% if item.tipo == 'documento' %}
+                    <div class="mx-auto max-w-[80%] rounded-lg border border-steel bg-slate-50 px-3 py-2 text-center text-xs text-slate-600">
+                        📎 <strong>{{ item.documento.documento_exigido.tipo }}</strong> recebido
+                        · {{ item.documento.get_status_display }}
+                        <span class="block text-[11px] text-slate-400">{{ item.quando|date:"d/m/Y H:i" }}</span>
+                    </div>
+                {% else %}
+                    {% with mensagem=item.mensagem %}
+                        <div class="flex {% if mensagem.direcao == 'saida' %}justify-end{% endif %}">
+                            <div class="max-w-[85%] rounded-lg px-3 py-2 text-sm leading-5
+                                        {% if mensagem.direcao == 'entrada' %}bg-white text-slate-800 ring-1 ring-slate-200
+                                        {% elif mensagem.origem == 'atendente' %}bg-green-100 text-slate-800
+                                        {% elif mensagem.origem == 'celular' %}bg-amber-50 text-slate-800 ring-1 ring-amber-200
+                                        {% else %}bg-slate-100 text-slate-700{% endif %}">
+                                <span class="mb-0.5 block text-[11px] font-bold uppercase tracking-wide
+                                             {% if mensagem.origem == 'celular' %}text-amber-700{% else %}text-slate-400{% endif %}">
+                                    {{ mensagem.assinatura }}
+                                </span>
+                                <span class="whitespace-pre-wrap">{{ mensagem.conteudo }}</span>
+                                <span class="mt-1 block text-[11px] text-slate-400">{{ mensagem.criada_em|date:"d/m H:i" }}</span>
+                            </div>
+                        </div>
+                    {% endwith %}
+                {% endif %}
+            {% empty %}
+                <p class="prose-copy text-center">Nenhuma mensagem ainda.</p>
+            {% endfor %}
+        </div>
+
+        <div class="mt-5 border-t border-steel pt-5">
+            {% if pode_responder %}
+                <form method="post" action="{% url 'conversa_responder' tarefa.id %}">
+                    {% csrf_token %}
+                    <label for="texto" class="data-label block">Sua resposta</label>
+                    <textarea id="texto" name="texto" rows="3" class="field mt-1"
+                              placeholder="Escreva para {{ tarefa.contato.nome_exibicao }}…" required></textarea>
+                    <p class="mt-1 text-xs text-slate-500">
+                        A mensagem sai assinada com o seu nome, para o cliente saber com quem fala.
+                    </p>
+                    <div class="mt-3 flex justify-end">
+                        <button type="submit" class="btn-primary">Enviar</button>
+                    </div>
+                </form>
+            {% elif na_fila %}
+                <div class="alert-info">
+                    Este atendimento ainda está na fila. Assuma para poder responder.
+                </div>
+            {% else %}
+                <div class="alert-info">
+                    Este atendimento é de
+                    <strong>{{ tarefa.atendente.get_full_name|default:tarefa.atendente.username }}</strong>.
+                    Você pode ler o histórico; para responder, assuma o atendimento.
+                </div>
+            {% endif %}
+        </div>
+    </section>
+
+    <aside class="space-y-4">
+        <div class="surface">
+            <h2 class="section-title">Atendimento</h2>
+
+            {% if not pode_responder %}
+                <form method="post" action="{% url 'tarefa_assumir' tarefa.id %}" class="mt-4">
+                    {% csrf_token %}
+                    <button type="submit" class="btn-primary w-full">
+                        {% if na_fila %}Assumir atendimento{% else %}Assumir de {{ tarefa.atendente.first_name|default:tarefa.atendente.username }}{% endif %}
+                    </button>
+                </form>
+            {% endif %}
+
+            {% if colegas %}
+                <form method="post" action="{% url 'tarefa_atribuir' tarefa.id %}" class="mt-4">
+                    {% csrf_token %}
+                    <label for="usuario_id" class="data-label block">Atribuir para</label>
+                    <select id="usuario_id" name="usuario_id" class="field mt-1">
+                        {% for colega in colegas %}
+                            <option value="{{ colega.id }}">{{ colega.get_full_name|default:colega.username }}</option>
+                        {% endfor %}
+                    </select>
+                    <button type="submit" class="btn-secondary mt-3 w-full">Atribuir</button>
+                </form>
+            {% else %}
+                <p class="mt-3 text-xs text-slate-500">
+                    Não há outra pessoa com acesso ativo para receber este atendimento.
+                </p>
+            {% endif %}
+
+            <p class="mt-4 border-t border-steel pt-3 text-xs text-slate-500">
+                O cliente é avisado sempre que o atendimento troca de mãos.
+            </p>
+        </div>
+
+        <div class="surface">
+            <h2 class="section-title">Pedido</h2>
+            <p class="mt-2 whitespace-pre-line text-sm text-slate-700">{{ tarefa.resumo_triagem }}</p>
+        </div>
+    </aside>
+</div>
+
+<script>
+    // Mensagem nova não pode depender de o atendente apertar F5. O polling é o
+    // mesmo padrão do badge do Kanban; ~20s de atraso é aceitável e evita
+    // trazer WebSocket e ASGI só para isto.
+    (function () {
+        const INTERVALO_MS = 20000;
+        const historico = document.querySelector('[data-historico]');
+        if (historico) historico.scrollTop = historico.scrollHeight;
+
+        let total = {{ total_mensagens }};
+
+        setInterval(() => {
+            fetch('{% url "conversa_novidades" tarefa.id %}')
+                .then((r) => r.json())
+                .then((dados) => {
+                    // Só recarrega quando há o que mostrar: recarregar à toa
+                    // apagaria o que o atendente estiver digitando.
+                    if (dados.total > total) window.location.reload();
+                })
+                .catch(() => {});
+        }, INTERVALO_MS);
+    })();
+</script>
+{% endblock %}

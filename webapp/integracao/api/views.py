@@ -115,7 +115,10 @@ def mensagens_enviar(request):
 
     envio = {'success': False, 'skipped': True}
     if sessao and dados.get('enviar_waha', True):
-        envio = enviar_texto(sessao, conversa.contato.wa_id, texto)
+        # chat_id, não wa_id: para contato novo do WhatsApp o wa_id é um LID, e
+        # remontar o endereço a partir dele manda a mensagem para lugar nenhum.
+        destino = conversa.contato.chat_id or conversa.contato.wa_id
+        envio = enviar_texto(sessao, destino, texto)
         if envio.get('success') and envio.get('data'):
             msg_id = str(envio['data'].get('id', ''))
             if msg_id:

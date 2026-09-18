@@ -8,14 +8,22 @@ from django.urls import reverse
 from django.utils import timezone
 
 from empresas.models import Empresa, EmpresaUsuario
+from integracao import anexos
 from integracao.models import WahaSessao
-from integracao.services.conversas import obter_ou_criar_conversa
+from integracao.models import EventoAtendimento
+from integracao.services.conversas import (
+    obter_ou_criar_conversa,
+    registrar_mensagem_do_celular,
+)
 
 from .models import (
     ConfiguracaoBot, Contato, Conversa, DocumentoExigido, DocumentoRecebido,
     Mensagem, Servico, Tarefa,
 )
 from .services import bot
+from .services.atendimento import (
+    assumir_tarefa, atribuir_tarefa, pode_responder, responder,
+)
 
 
 class IsolamentoEmpresaTests(TestCase):
@@ -70,7 +78,7 @@ class IsolamentoEmpresaTests(TestCase):
         self.assertEqual(self.tarefa_b.status, Tarefa.Status.ABERTA)
 
 
-@patch('atendimento.services.bot.enviar_texto',
+@patch('atendimento.services.mensageria.enviar_texto',
        return_value={'success': True, 'data': {'id': 'out-1'}})
 class BotTests(TestCase):
     def setUp(self):
@@ -86,12 +94,12 @@ class BotTests(TestCase):
         self.conversa = Conversa.objects.create(
             empresa=self.empresa, contato=self.contato)
 
-    def receber(self, texto, *, tem_midia=False):
+    def receber(self, texto, *, anexo=None):
         mensagem = Mensagem.objects.create(
             empresa=self.empresa, conversa=self.conversa,
             direcao=Mensagem.Direcao.ENTRADA, conteudo=texto)
         self.conversa.refresh_from_db()
-        bot.processar_mensagem(self.conversa, mensagem, tem_midia=tem_midia)
+        bot.processar_mensagem(self.conversa, mensagem, anexo=anexo)
         self.conversa.refresh_from_db()
 
     @property
@@ -176,13 +184,13 @@ class BotTests(TestCase):
         self.assertEqual(DocumentoRecebido.objects.count(), 0)
         self.assertIn('Ainda preciso', self.saidas[-1])
 
-        self.receber('', tem_midia=True)
+        self.receber('', anexo='foto')
         self.assertEqual(DocumentoRecebido.objects.count(), 1)
         self.assertIn('CNH', self.saidas[-1])
         tarefa.refresh_from_db()
         self.assertIn('Documentos: 1 de 2.', tarefa.resumo_triagem)
 
-        self.receber('', tem_midia=True)
+        self.receber('', anexo='foto')
         self.assertEqual(self.conversa.modo, Conversa.Modo.HUMANO)
         self.assertEqual(self.conversa.estado, Conversa.Estado.AGUARDANDO_HUMANO)
         self.assertIn('Recebi todos os documentos', self.saidas[-1])
@@ -246,17 +254,58 @@ class ExpiracaoDeConversaTests(TestCase):
         antiga.refresh_from_db()
         self.assertEqual(antiga.estado, Conversa.Estado.ENCERRADA)
 
-    def test_conversa_em_modo_humano_nao_expira(self):
+    def criar_tarefa(self, conversa, status, atendente=None):
+        return Tarefa.objects.create(
+            empresa=self.empresa, conversa=conversa, contato=self.contato,
+            origem=Tarefa.Origem.FLUXO_COMPLETO, resumo_triagem='Pedido',
+            status=status, atendente=atendente)
+
+    def test_atendimento_assumido_nunca_expira(self):
+        """Silêncio do cliente não tira o atendimento das mãos de quem o pegou."""
+        usuario = get_user_model().objects.create_user('ana', password='x')
         antiga = Conversa.objects.create(
             empresa=self.empresa, contato=self.contato,
             modo=Conversa.Modo.HUMANO,
             estado=Conversa.Estado.AGUARDANDO_HUMANO)
+        self.criar_tarefa(antiga, Tarefa.Status.EM_ATENDIMENTO, usuario)
         self.envelhecer(antiga, 200)
 
         conversa, criada = obter_ou_criar_conversa(self.empresa, self.contato)
 
         self.assertFalse(criada)
         self.assertEqual(conversa.pk, antiga.pk)
+
+    def test_card_parado_na_fila_expira_mesmo_em_modo_humano(self):
+        antiga = Conversa.objects.create(
+            empresa=self.empresa, contato=self.contato,
+            modo=Conversa.Modo.HUMANO,
+            estado=Conversa.Estado.AGUARDANDO_HUMANO)
+        tarefa = self.criar_tarefa(antiga, Tarefa.Status.ABERTA)
+        self.envelhecer(antiga, 200)
+
+        nova, criada = obter_ou_criar_conversa(self.empresa, self.contato)
+
+        self.assertTrue(criada)
+        self.assertEqual(nova.modo, Conversa.Modo.BOT)
+        antiga.refresh_from_db()
+        self.assertEqual(antiga.estado, Conversa.Estado.ENCERRADA)
+        # O card órfão é cancelado: senão o mesmo contato apareceria duas vezes
+        # no Kanban assim que o bot abrisse o card da conversa nova.
+        tarefa.refresh_from_db()
+        self.assertEqual(tarefa.status, Tarefa.Status.CANCELADA)
+
+    def test_prazo_vem_da_configuracao_da_empresa(self):
+        configuracao = ConfiguracaoBot.para(self.empresa)
+        configuracao.horas_ate_expirar = 2
+        configuracao.save()
+
+        antiga = Conversa.objects.create(
+            empresa=self.empresa, contato=self.contato)
+        self.envelhecer(antiga, 3)
+
+        _, criada = obter_ou_criar_conversa(self.empresa, self.contato)
+
+        self.assertTrue(criada)
 
     def test_conversa_recente_continua(self):
         antiga = Conversa.objects.create(empresa=self.empresa, contato=self.contato)
@@ -268,7 +317,7 @@ class ExpiracaoDeConversaTests(TestCase):
         self.assertEqual(conversa.pk, antiga.pk)
 
 
-@patch('atendimento.services.bot.enviar_texto',
+@patch('atendimento.services.mensageria.enviar_texto',
        return_value={'success': True, 'data': {'id': 'out-1'}})
 class ConfiguracaoBotAplicadaTests(TestCase):
     """O que a tela salva tem de chegar no que o cliente lê no WhatsApp."""
@@ -603,7 +652,7 @@ class TelaChatbotTests(TestCase):
         self.assertFalse(self.servico.ativo)
 
 
-@patch('atendimento.services.bot.enviar_texto',
+@patch('atendimento.services.mensageria.enviar_texto',
        return_value={'success': True, 'data': {'id': 'out-1'}})
 class ReligarConversaTests(TestCase):
     def setUp(self):
@@ -661,7 +710,7 @@ class ReligarConversaTests(TestCase):
         self.assertEqual(self.conversa.modo, Conversa.Modo.HUMANO)
 
 
-@patch('atendimento.services.bot.enviar_texto',
+@patch('atendimento.services.mensageria.enviar_texto',
        return_value={'success': True, 'data': {'id': 'out-1'}})
 class SubOpcoesDoMenuTests(TestCase):
     """Ramificação da conversa: 'Transferência' → 'Carro' ou 'Moto'."""
@@ -688,12 +737,12 @@ class SubOpcoesDoMenuTests(TestCase):
         self.conversa = Conversa.objects.create(
             empresa=self.empresa, contato=self.contato)
 
-    def receber(self, texto, *, tem_midia=False):
+    def receber(self, texto, *, anexo=None):
         mensagem = Mensagem.objects.create(
             empresa=self.empresa, conversa=self.conversa,
             direcao=Mensagem.Direcao.ENTRADA, conteudo=texto)
         self.conversa.refresh_from_db()
-        bot.processar_mensagem(self.conversa, mensagem, tem_midia=tem_midia)
+        bot.processar_mensagem(self.conversa, mensagem, anexo=anexo)
         self.conversa.refresh_from_db()
 
     @property
@@ -950,3 +999,547 @@ class TelaSubOpcoesTests(TestCase):
 
         self.assertEqual(resposta.context['previa_submenu']['opcoes'], [])
         self.assertEqual(resposta.context['pai'], self.transferencia)
+
+
+@patch('atendimento.services.mensageria.enviar_texto',
+       return_value={'success': True, 'data': {'id': 'out-1'}})
+class AtendimentoHumanoTests(TestCase):
+    """Quem fala com quem: assumir, responder, transferir."""
+
+    def setUp(self):
+        User = get_user_model()
+        self.empresa = Empresa.objects.create(nome='Despachante Teste')
+        WahaSessao.objects.create(empresa=self.empresa, nome_sessao='teste')
+
+        self.ana = User.objects.create_user('ana', password='x', first_name='Ana')
+        self.bruno = User.objects.create_user('bruno', password='x', first_name='Bruno')
+        for usuario in (self.ana, self.bruno):
+            usuario.empresas_vinculadas.all().delete()
+            EmpresaUsuario.objects.create(
+                empresa=self.empresa, usuario=usuario, ativo=True)
+
+        self.contato = Contato.objects.create(
+            empresa=self.empresa, wa_id='5541955554444',
+            chat_id='5541955554444@c.us', nome='Cliente')
+        self.conversa = Conversa.objects.create(
+            empresa=self.empresa, contato=self.contato,
+            modo=Conversa.Modo.HUMANO, estado=Conversa.Estado.AGUARDANDO_HUMANO)
+        self.tarefa = Tarefa.objects.create(
+            empresa=self.empresa, conversa=self.conversa, contato=self.contato,
+            origem=Tarefa.Origem.FLUXO_COMPLETO, resumo_triagem='Licenciamento')
+
+    def mover(self, usuario, status):
+        self.client.force_login(usuario)
+        return self.client.post(
+            reverse('atualizar_status_tarefa'),
+            data=json.dumps({'tarefa_id': str(self.tarefa.id), 'novo_status': status}),
+            content_type='application/json',
+        )
+
+    # --- assumir -------------------------------------------------------------
+
+    def test_assumir_tira_o_card_da_fila(self, _enviar):
+        assumida = assumir_tarefa(self.tarefa, self.ana)
+
+        self.assertIsNotNone(assumida)
+        self.assertEqual(assumida.status, Tarefa.Status.EM_ATENDIMENTO)
+        self.assertEqual(assumida.atendente, self.ana)
+
+    def test_o_segundo_a_assumir_nao_sobrescreve_o_primeiro(self, _enviar):
+        """A trava é o UPDATE condicional: quem chega depois altera zero linhas."""
+        primeiro = assumir_tarefa(self.tarefa, self.ana)
+        self.assertIsNotNone(primeiro)
+
+        # O segundo parte de uma cópia carregada antes, como aconteceria com
+        # dois cliques quase simultâneos em duas abas.
+        copia = Tarefa.objects.get(pk=self.tarefa.pk)
+        copia.status = Tarefa.Status.ABERTA
+        copia.atendente = None
+
+        self.assertIsNone(assumir_tarefa(copia, self.bruno))
+        self.tarefa.refresh_from_db()
+        self.assertEqual(self.tarefa.atendente, self.ana)
+
+    def test_assumir_avisa_o_cliente(self, enviar):
+        assumir_tarefa(self.tarefa, self.ana)
+
+        texto = enviar.call_args.kwargs['texto']
+        self.assertIn('Ana', texto)
+        self.assertEqual(
+            enviar.call_args.kwargs['chat_id'], '5541955554444@c.us')
+
+    def test_assumir_cala_o_bot(self, _enviar):
+        self.conversa.modo = Conversa.Modo.BOT
+        self.conversa.save()
+
+        assumir_tarefa(self.tarefa, self.ana)
+
+        self.conversa.refresh_from_db()
+        self.assertEqual(self.conversa.modo, Conversa.Modo.HUMANO)
+
+    # --- responder -----------------------------------------------------------
+
+    def test_so_o_dono_responde(self, _enviar):
+        assumir_tarefa(self.tarefa, self.ana)
+
+        self.assertTrue(pode_responder(self.conversa, self.ana))
+        self.assertFalse(pode_responder(self.conversa, self.bruno))
+
+    def test_card_na_fila_ninguem_responde(self, _enviar):
+        self.assertFalse(pode_responder(self.conversa, self.ana))
+
+    def test_resposta_sai_assinada_e_registra_o_autor(self, enviar):
+        assumir_tarefa(self.tarefa, self.ana)
+
+        self.assertTrue(responder(self.conversa, self.ana, 'Bom dia!'))
+
+        enviada = self.conversa.mensagens.filter(
+            origem=Mensagem.Origem.ATENDENTE).order_by('id').last()
+        self.assertEqual(enviada.autor, self.ana)
+        self.assertIn('*Ana:*', enviada.conteudo)
+        self.assertIn('Bom dia!', enviada.conteudo)
+        self.assertIn('Bom dia!', enviar.call_args.kwargs['texto'])
+
+    def test_view_recusa_resposta_de_quem_nao_e_dono(self, _enviar):
+        assumir_tarefa(self.tarefa, self.ana)
+        self.client.force_login(self.bruno)
+
+        resposta = self.client.post(
+            reverse('conversa_responder', args=[self.tarefa.id]),
+            data={'texto': 'oi'})
+
+        self.assertEqual(resposta.status_code, 403)
+        self.assertFalse(
+            self.conversa.mensagens.filter(autor=self.bruno).exists())
+
+    def test_falha_de_envio_nao_grava_a_mensagem(self, enviar):
+        assumir_tarefa(self.tarefa, self.ana)
+        enviar.return_value = {'success': False, 'error': 'WAHA fora do ar'}
+
+        self.client.force_login(self.ana)
+        resposta = self.client.post(
+            reverse('conversa_responder', args=[self.tarefa.id]),
+            data={'texto': 'sai?'})
+
+        self.assertEqual(resposta.status_code, 502)
+        self.assertFalse(
+            self.conversa.mensagens.filter(conteudo__contains='sai?').exists())
+
+    # --- transferir ----------------------------------------------------------
+
+    def test_atribuir_troca_o_dono_e_avisa_o_cliente(self, enviar):
+        assumir_tarefa(self.tarefa, self.ana)
+
+        atribuir_tarefa(self.tarefa, self.bruno, por=self.ana)
+
+        self.tarefa.refresh_from_db()
+        self.assertEqual(self.tarefa.atendente, self.bruno)
+        self.assertTrue(pode_responder(self.conversa, self.bruno))
+        self.assertFalse(pode_responder(self.conversa, self.ana))
+        self.assertIn('Bruno', enviar.call_args.kwargs['texto'])
+
+    def test_atribuicao_deixa_rastro(self, _enviar):
+        assumir_tarefa(self.tarefa, self.ana)
+        atribuir_tarefa(self.tarefa, self.bruno, por=self.ana)
+
+        evento = EventoAtendimento.objects.filter(
+            tipo=EventoAtendimento.Tipo.TAREFA_ATRIBUIDA).order_by('-id').first()
+        self.assertEqual(evento.payload['de'], 'ana')
+        self.assertEqual(evento.payload['para'], 'bruno')
+        self.assertEqual(evento.ator, 'ana')
+
+    def test_nao_atribui_para_quem_perdeu_o_acesso(self, _enviar):
+        assumir_tarefa(self.tarefa, self.ana)
+        EmpresaUsuario.objects.filter(
+            empresa=self.empresa, usuario=self.bruno).update(ativo=False)
+
+        self.client.force_login(self.ana)
+        self.client.post(reverse('tarefa_atribuir', args=[self.tarefa.id]),
+                         data={'usuario_id': self.bruno.id})
+
+        self.tarefa.refresh_from_db()
+        self.assertEqual(self.tarefa.atendente, self.ana)
+
+    def test_qualquer_atendente_assume_card_de_outro(self, _enviar):
+        """D-ATD-3: não exige papel de administrador."""
+        assumir_tarefa(self.tarefa, self.ana)
+
+        self.client.force_login(self.bruno)
+        self.client.post(reverse('tarefa_assumir', args=[self.tarefa.id]))
+
+        self.tarefa.refresh_from_db()
+        self.assertEqual(self.tarefa.atendente, self.bruno)
+
+    # --- Kanban --------------------------------------------------------------
+
+    def test_card_nao_volta_para_a_fila(self, _enviar):
+        assumir_tarefa(self.tarefa, self.ana)
+
+        resposta = self.mover(self.ana, Tarefa.Status.ABERTA)
+
+        self.assertEqual(resposta.status_code, 409)
+        self.tarefa.refresh_from_db()
+        self.assertEqual(self.tarefa.status, Tarefa.Status.EM_ATENDIMENTO)
+        self.assertEqual(self.tarefa.atendente, self.ana)
+
+    def test_mover_card_de_outro_e_recusado(self, _enviar):
+        assumir_tarefa(self.tarefa, self.ana)
+
+        resposta = self.mover(self.bruno, Tarefa.Status.CONCLUIDA)
+
+        self.assertEqual(resposta.status_code, 403)
+        self.tarefa.refresh_from_db()
+        self.assertEqual(self.tarefa.status, Tarefa.Status.EM_ATENDIMENTO)
+
+    def test_concluir_encerra_a_conversa(self, _enviar):
+        """Sem isto, o cliente que volta depois cai no vazio."""
+        assumir_tarefa(self.tarefa, self.ana)
+
+        self.assertEqual(self.mover(self.ana, Tarefa.Status.CONCLUIDA).status_code, 200)
+
+        self.conversa.refresh_from_db()
+        self.assertEqual(self.conversa.estado, Conversa.Estado.ENCERRADA)
+
+    def test_cliente_que_volta_depois_de_concluido_comeca_atendimento_novo(self, _enviar):
+        assumir_tarefa(self.tarefa, self.ana)
+        self.mover(self.ana, Tarefa.Status.CONCLUIDA)
+
+        nova, criada = obter_ou_criar_conversa(self.empresa, self.contato)
+
+        self.assertTrue(criada)
+        self.assertEqual(nova.modo, Conversa.Modo.BOT)
+        self.assertEqual(nova.estado, Conversa.Estado.TRIAGEM)
+
+    # --- tela ----------------------------------------------------------------
+
+    def test_tela_mostra_campo_de_resposta_so_para_o_dono(self, _enviar):
+        assumir_tarefa(self.tarefa, self.ana)
+
+        self.client.force_login(self.ana)
+        self.assertTrue(
+            self.client.get(reverse('conversa', args=[self.tarefa.id]))
+            .context['pode_responder'])
+
+        self.client.force_login(self.bruno)
+        self.assertFalse(
+            self.client.get(reverse('conversa', args=[self.tarefa.id]))
+            .context['pode_responder'])
+
+    def test_nao_abre_conversa_de_outra_empresa(self, _enviar):
+        outra = Empresa.objects.create(nome='Concorrente')
+        contato = Contato.objects.create(empresa=outra, wa_id='5541900000000')
+        conversa = Conversa.objects.create(empresa=outra, contato=contato)
+        alheia = Tarefa.objects.create(
+            empresa=outra, conversa=conversa, contato=contato,
+            origem=Tarefa.Origem.FLUXO_COMPLETO, resumo_triagem='x')
+
+        self.client.force_login(self.ana)
+        resposta = self.client.get(reverse('conversa', args=[alheia.id]))
+
+        self.assertEqual(resposta.status_code, 404)
+
+
+class RespostaPeloCelularTests(TestCase):
+    """Mensagem digitada no celular da empresa entra no histórico, sem acordar o bot."""
+
+    def setUp(self):
+        self.empresa = Empresa.objects.create(nome='Despachante Teste')
+        self.contato = Contato.objects.create(
+            empresa=self.empresa, wa_id='5541944443333',
+            chat_id='5541944443333@c.us')
+        self.conversa = Conversa.objects.create(
+            empresa=self.empresa, contato=self.contato,
+            modo=Conversa.Modo.HUMANO, estado=Conversa.Estado.AGUARDANDO_HUMANO)
+
+    def test_registra_como_saida_do_celular(self):
+        mensagem, gravou = registrar_mensagem_do_celular(
+            self.empresa, wa_id='5541944443333',
+            conteudo='Já estou vendo aqui', wa_message_id='cel-1')
+
+        self.assertTrue(gravou)
+        self.assertEqual(mensagem.direcao, Mensagem.Direcao.SAIDA)
+        self.assertEqual(mensagem.origem, Mensagem.Origem.CELULAR)
+        self.assertIsNone(mensagem.autor)
+
+    def test_eco_do_proprio_envio_e_descartado(self):
+        Mensagem.objects.create(
+            empresa=self.empresa, conversa=self.conversa,
+            direcao=Mensagem.Direcao.SAIDA, origem=Mensagem.Origem.BOT,
+            conteudo='menu', wa_message_id='eco-1')
+
+        _, gravou = registrar_mensagem_do_celular(
+            self.empresa, wa_id='5541944443333',
+            conteudo='menu', wa_message_id='eco-1')
+
+        self.assertFalse(gravou)
+        self.assertEqual(self.conversa.mensagens.count(), 1)
+
+    def test_contato_desconhecido_nao_vira_conversa(self):
+        """Saída para número que nunca falou conosco pode ser conversa pessoal."""
+        _, gravou = registrar_mensagem_do_celular(
+            self.empresa, wa_id='5541911112222',
+            conteudo='oi mãe', wa_message_id='pessoal-1')
+
+        self.assertFalse(gravou)
+        self.assertEqual(Contato.objects.count(), 1)
+
+
+@patch('atendimento.services.mensageria.enviar_texto',
+       return_value={'success': True, 'data': {'id': 'out-1'}})
+class MinhasConversasTests(TestCase):
+    """A lista mostra só o que está comigo — o Kanban é que mostra a equipe."""
+
+    def setUp(self):
+        User = get_user_model()
+        self.empresa = Empresa.objects.create(nome='Despachante Teste')
+        WahaSessao.objects.create(empresa=self.empresa, nome_sessao='teste')
+        self.ana = User.objects.create_user('ana', password='x', first_name='Ana')
+        self.bruno = User.objects.create_user('bruno', password='x', first_name='Bruno')
+        for usuario in (self.ana, self.bruno):
+            usuario.empresas_vinculadas.all().delete()
+            EmpresaUsuario.objects.create(
+                empresa=self.empresa, usuario=usuario, ativo=True)
+        self.client.force_login(self.ana)
+
+    def criar_tarefa(self, wa_id, atendente=None, status=Tarefa.Status.ABERTA):
+        contato = Contato.objects.create(
+            empresa=self.empresa, wa_id=wa_id, chat_id=f'{wa_id}@c.us')
+        conversa = Conversa.objects.create(
+            empresa=self.empresa, contato=contato,
+            modo=Conversa.Modo.HUMANO, estado=Conversa.Estado.AGUARDANDO_HUMANO)
+        return Tarefa.objects.create(
+            empresa=self.empresa, conversa=conversa, contato=contato,
+            origem=Tarefa.Origem.FLUXO_COMPLETO, resumo_triagem='Pedido',
+            status=status, atendente=atendente)
+
+    def listar(self):
+        return self.client.get(reverse('minhas_conversas')).context['tarefas']
+
+    def test_lista_so_os_meus_atendimentos(self, _enviar):
+        minha = self.criar_tarefa('5541900000001', self.ana, Tarefa.Status.EM_ATENDIMENTO)
+        self.criar_tarefa('5541900000002', self.bruno, Tarefa.Status.EM_ATENDIMENTO)
+        self.criar_tarefa('5541900000003')  # na fila, de ninguém
+
+        self.assertEqual([t.id for t in self.listar()], [minha.id])
+
+    def test_card_concluido_sai_da_lista(self, _enviar):
+        self.criar_tarefa('5541900000004', self.ana, Tarefa.Status.CONCLUIDA)
+        self.assertEqual(list(self.listar()), [])
+
+    def test_marca_quem_esta_esperando_resposta(self, _enviar):
+        aguardando = self.criar_tarefa(
+            '5541900000005', self.ana, Tarefa.Status.EM_ATENDIMENTO)
+        Mensagem.objects.create(
+            empresa=self.empresa, conversa=aguardando.conversa,
+            direcao=Mensagem.Direcao.ENTRADA, origem=Mensagem.Origem.CLIENTE,
+            conteudo='e aí, saiu?')
+
+        respondida = self.criar_tarefa(
+            '5541900000006', self.ana, Tarefa.Status.EM_ATENDIMENTO)
+        Mensagem.objects.create(
+            empresa=self.empresa, conversa=respondida.conversa,
+            direcao=Mensagem.Direcao.ENTRADA, origem=Mensagem.Origem.CLIENTE,
+            conteudo='oi')
+        Mensagem.objects.create(
+            empresa=self.empresa, conversa=respondida.conversa,
+            direcao=Mensagem.Direcao.SAIDA, origem=Mensagem.Origem.ATENDENTE,
+            autor=self.ana, conteudo='já respondo')
+
+        por_id = {t.id: t for t in self.listar()}
+        self.assertTrue(por_id[aguardando.id].aguardando_resposta)
+        self.assertFalse(por_id[respondida.id].aguardando_resposta)
+
+    def test_badge_conta_so_o_que_espera_por_mim(self, _enviar):
+        minha = self.criar_tarefa(
+            '5541900000007', self.ana, Tarefa.Status.EM_ATENDIMENTO)
+        Mensagem.objects.create(
+            empresa=self.empresa, conversa=minha.conversa,
+            direcao=Mensagem.Direcao.ENTRADA, origem=Mensagem.Origem.CLIENTE,
+            conteudo='oi')
+
+        do_bruno = self.criar_tarefa(
+            '5541900000008', self.bruno, Tarefa.Status.EM_ATENDIMENTO)
+        Mensagem.objects.create(
+            empresa=self.empresa, conversa=do_bruno.conversa,
+            direcao=Mensagem.Direcao.ENTRADA, origem=Mensagem.Origem.CLIENTE,
+            conteudo='oi')
+
+        resposta = self.client.get(reverse('minhas_conversas_status'))
+        self.assertEqual(resposta.json()['total'], 1)
+
+    def test_nao_lista_atendimento_de_outra_empresa(self, _enviar):
+        outra = Empresa.objects.create(nome='Concorrente')
+        EmpresaUsuario.objects.create(
+            empresa=outra, usuario=self.ana, ativo=True)
+        contato = Contato.objects.create(empresa=outra, wa_id='5541911111111')
+        conversa = Conversa.objects.create(empresa=outra, contato=contato)
+        Tarefa.objects.create(
+            empresa=outra, conversa=conversa, contato=contato,
+            origem=Tarefa.Origem.FLUXO_COMPLETO, resumo_triagem='x',
+            status=Tarefa.Status.EM_ATENDIMENTO, atendente=self.ana)
+
+        minha = self.criar_tarefa(
+            '5541900000009', self.ana, Tarefa.Status.EM_ATENDIMENTO)
+
+        # A empresa ativa é escolhida por ordem de nome quando a sessão não diz
+        # qual é — fixá-la aqui é o que torna o teste sobre isolamento, e não
+        # sobre alfabeto.
+        sessao = self.client.session
+        sessao['empresa_atual_id'] = self.empresa.id
+        sessao.save()
+
+        self.assertEqual([t.id for t in self.listar()], [minha.id])
+
+
+class ClassificacaoDeAnexoTests(TestCase):
+    """O que o WAHA manda vs. o que o bot entende que chegou."""
+
+    def test_figurinha_nao_e_foto(self):
+        """image/webp é figurinha; sem isto ela passaria por foto."""
+        self.assertEqual(anexos.classificar({'mimetype': 'image/webp'}), anexos.FIGURINHA)
+        self.assertEqual(anexos.classificar({'type': 'sticker'}), anexos.FIGURINHA)
+        self.assertEqual(
+            anexos.classificar({'_data': {'isSticker': True}}), anexos.FIGURINHA)
+
+    def test_categorias(self):
+        casos = [
+            ({'mimetype': 'image/jpeg'}, anexos.FOTO),
+            ({'type': 'image'}, anexos.FOTO),
+            ({'mimetype': 'application/pdf'}, anexos.DOCUMENTO),
+            ({'type': 'document'}, anexos.DOCUMENTO),
+            ({'type': 'ptt'}, anexos.AUDIO),
+            ({'mimetype': 'audio/ogg'}, anexos.AUDIO),
+            ({'mimetype': 'video/mp4'}, anexos.VIDEO),
+            ({'type': 'location'}, anexos.LOCALIZACAO),
+            ({'type': 'vcard'}, anexos.CONTATO),
+            ({'hasMedia': True}, anexos.OUTRO),
+            ({'body': 'oi'}, None),
+            ({'mimetype': 'text/plain'}, None),
+        ]
+        for payload, esperado in casos:
+            self.assertEqual(anexos.classificar(payload), esperado, payload)
+
+    def test_so_foto_e_documento_valem(self):
+        self.assertTrue(anexos.vale_como_documento(anexos.FOTO))
+        self.assertTrue(anexos.vale_como_documento(anexos.DOCUMENTO))
+        for recusado in (anexos.FIGURINHA, anexos.AUDIO, anexos.VIDEO,
+                         anexos.LOCALIZACAO, anexos.CONTATO, anexos.OUTRO, None):
+            self.assertFalse(anexos.vale_como_documento(recusado), recusado)
+
+
+@patch('atendimento.services.mensageria.enviar_texto',
+       return_value={'success': True, 'data': {'id': 'out-1'}})
+class BotComAnexosTests(TestCase):
+    """Figurinha, áudio e afins não podem valer como resposta nem como documento."""
+
+    def setUp(self):
+        self.empresa = Empresa.objects.create(nome='Despachante Teste')
+        WahaSessao.objects.create(empresa=self.empresa, nome_sessao='teste')
+        self.servico = Servico.objects.create(
+            empresa=self.empresa, nome='Licenciamento')
+        DocumentoExigido.objects.create(
+            empresa=self.empresa, servico=self.servico,
+            tipo='CPF', instrucoes='Foto do seu CPF.')
+        DocumentoExigido.objects.create(
+            empresa=self.empresa, servico=self.servico,
+            tipo='CNH', instrucoes='Foto da sua CNH.')
+        self.contato = Contato.objects.create(
+            empresa=self.empresa, wa_id='5541933332222',
+            chat_id='5541933332222@c.us')
+        self.conversa = Conversa.objects.create(
+            empresa=self.empresa, contato=self.contato)
+
+    def receber(self, texto='', *, anexo=None):
+        mensagem = Mensagem.objects.create(
+            empresa=self.empresa, conversa=self.conversa,
+            direcao=Mensagem.Direcao.ENTRADA, conteudo=texto)
+        self.conversa.refresh_from_db()
+        bot.processar_mensagem(self.conversa, mensagem, anexo=anexo)
+        self.conversa.refresh_from_db()
+
+    @property
+    def ultima(self):
+        return (self.conversa.mensagens.filter(direcao=Mensagem.Direcao.SAIDA)
+                .order_by('id').last().conteudo)
+
+    def chegar_na_coleta(self):
+        self.receber('Oi')
+        self.receber('1')
+        self.assertEqual(self.conversa.estado, Conversa.Estado.COLETANDO_DOCUMENTOS)
+
+    # --- coleta --------------------------------------------------------------
+
+    def test_figurinha_nao_vale_como_documento(self, _enviar):
+        """Era o defeito: o bot dava o CPF por recebido e pedia o próximo."""
+        self.chegar_na_coleta()
+
+        self.receber(anexo=anexos.FIGURINHA)
+
+        self.assertEqual(DocumentoRecebido.objects.count(), 0)
+        self.assertIn('figurinha', self.ultima.lower())
+        self.assertIn('CPF', self.ultima)
+
+    def test_audio_video_contato_e_localizacao_tambem_nao_valem(self, _enviar):
+        self.chegar_na_coleta()
+
+        for anexo in (anexos.AUDIO, anexos.VIDEO, anexos.CONTATO,
+                      anexos.LOCALIZACAO, anexos.OUTRO):
+            self.receber(anexo=anexo)
+            self.assertEqual(DocumentoRecebido.objects.count(), 0, anexo)
+            self.assertIn('CPF', self.ultima)
+
+    def test_audio_na_coleta_admite_que_o_bot_nao_escuta(self, _enviar):
+        self.chegar_na_coleta()
+
+        self.receber(anexo=anexos.AUDIO)
+
+        self.assertIn('Não consigo ouvir áudios', self.ultima)
+
+    def test_foto_e_pdf_seguem_valendo(self, _enviar):
+        self.chegar_na_coleta()
+
+        self.receber(anexo=anexos.FOTO)
+        self.assertEqual(DocumentoRecebido.objects.count(), 1)
+        self.assertIn('CNH', self.ultima)
+
+        self.receber(anexo=anexos.DOCUMENTO)
+        self.assertEqual(DocumentoRecebido.objects.count(), 2)
+
+    def test_anexo_recusado_nao_consome_a_vez_do_documento(self, _enviar):
+        """Depois da figurinha, o CPF continua sendo o documento da vez."""
+        self.chegar_na_coleta()
+
+        self.receber(anexo=anexos.FIGURINHA)
+        self.receber(anexo=anexos.FOTO)
+
+        recebido = DocumentoRecebido.objects.get()
+        self.assertEqual(recebido.documento_exigido.tipo, 'CPF')
+
+    # --- triagem -------------------------------------------------------------
+
+    def test_figurinha_na_triagem_nao_escolhe_opcao(self, _enviar):
+        self.receber('Oi')
+
+        self.receber(anexo=anexos.FIGURINHA)
+
+        self.assertFalse(Tarefa.objects.exists())
+        self.assertIn('figurinha', self.ultima.lower())
+        self.assertIn('1 - Licenciamento', self.ultima)
+
+    def test_legenda_com_numero_nao_vale_como_escolha(self, _enviar):
+        """'1' na legenda de uma foto não é o cliente escolhendo o menu."""
+        self.receber('Oi')
+
+        self.receber('1', anexo=anexos.FOTO)
+
+        self.assertFalse(Tarefa.objects.exists())
+        self.assertEqual(self.conversa.estado, Conversa.Estado.TRIAGEM)
+
+    def test_tres_anexos_seguidos_levam_a_um_atendente(self, _enviar):
+        """Cliente que só manda figurinha acaba com uma pessoa, não em laço."""
+        self.receber('Oi')
+        for _ in range(3):
+            self.receber(anexo=anexos.FIGURINHA)
+
+        self.assertEqual(self.conversa.modo, Conversa.Modo.HUMANO)
+        self.assertEqual(Tarefa.objects.count(), 1)

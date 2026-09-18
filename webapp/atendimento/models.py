@@ -5,6 +5,17 @@ from django.db import models
 from django.conf import settings
 
 
+def nome_curto(usuario):
+    """Como o cliente e o Kanban chamam um atendente.
+
+    O primeiro nome é o que soa natural numa conversa de WhatsApp; o username
+    fica por último porque costuma ser um login, não um nome.
+    """
+    if usuario is None:
+        return ''
+    return (usuario.first_name or usuario.get_full_name() or usuario.username).strip()
+
+
 class Contato(models.Model):
     empresa = models.ForeignKey('empresas.Empresa', on_delete=models.PROTECT, related_name='contatos')
     # Identificador do WhatsApp: pode ser o telefone ou um LID (contas novas),
@@ -161,6 +172,10 @@ class ConfiguracaoBot(models.Model):
     max_tentativas_invalidas = models.PositiveSmallIntegerField(
         default=3, validators=[MinValueValidator(1), MaxValueValidator(10)],
         help_text='Respostas seguidas não entendidas antes de transferir para um atendente.')
+    horas_ate_expirar = models.PositiveSmallIntegerField(
+        default=48, validators=[MinValueValidator(1), MaxValueValidator(720)],
+        help_text='Horas de silêncio até a conversa ser encerrada e voltar ao bot. '
+                  'Atendimento já assumido por alguém nunca expira.')
     palavras_atendente = models.CharField(
         max_length=255, default=PALAVRAS_ATENDENTE_PADRAO,
         help_text='Separadas por vírgula. Em qualquer etapa, transferem para um atendente.')
@@ -230,15 +245,44 @@ class Mensagem(models.Model):
         ENTRADA = 'entrada', 'Entrada'
         SAIDA = 'saida', 'Saída'
 
+    class Origem(models.TextChoices):
+        CLIENTE = 'cliente', 'Cliente'
+        BOT = 'bot', 'Bot'
+        ATENDENTE = 'atendente', 'Atendente'
+        # Resposta digitada no celular da empresa: chega pelo WAHA como `fromMe`.
+        # Entra no histórico para o atendente não responder em cima, mas não tem
+        # autor — o WhatsApp não diz quem digitou.
+        CELULAR = 'celular', 'Celular da empresa'
+
     empresa = models.ForeignKey('empresas.Empresa', on_delete=models.PROTECT, related_name='mensagens')
     conversa = models.ForeignKey(Conversa, on_delete=models.CASCADE, related_name='mensagens')
     direcao = models.CharField(max_length=10, choices=Direcao.choices)
+    origem = models.CharField(
+        max_length=12, choices=Origem.choices, default=Origem.CLIENTE)
+    # Preenchido só quando quem respondeu foi uma pessoa pelo sistema. Nulo para
+    # cliente, bot e celular da empresa.
+    autor = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='mensagens_enviadas')
     conteudo = models.TextField()
     wa_message_id = models.CharField(max_length=100, blank=True, db_index=True)
     criada_em = models.DateTimeField(auto_now_add=True)
 
+    class Meta:
+        # O 'id' desempata: duas mensagens gravadas no mesmo instante — o aviso
+        # de quem assumiu e a primeira resposta, por exemplo — sairiam em ordem
+        # imprevisível se a data fosse o único critério.
+        ordering = ['criada_em', 'id']
+
     def __str__(self):
         return f"{self.get_direcao_display()}: {self.conteudo[:50]}"
+
+    @property
+    def assinatura(self):
+        """Quem falou, para a linha do tempo do atendente."""
+        if self.origem == self.Origem.ATENDENTE and self.autor:
+            return nome_curto(self.autor)
+        return self.get_origem_display()
 
 
 class DocumentoExigido(models.Model):

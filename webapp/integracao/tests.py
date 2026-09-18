@@ -4,9 +4,12 @@ from unittest.mock import patch
 from django.test import TestCase, override_settings
 from django.urls import reverse
 
+from django.contrib.auth import get_user_model
+
 from empresas.models import Empresa, EmpresaUsuario
 from atendimento.models import Contato, Conversa, Servico, Tarefa
 from integracao.models import EventoAtendimento, WahaSessao, WebhookRecebido
+from integracao.services.waha_service import WahaService
 
 
 API_TOKEN = 'token-teste-integracao'
@@ -105,7 +108,7 @@ class IntegracaoApiTests(TestCase):
         self.assertEqual(resposta.json()['status'], 'ignorado')
         self.assertFalse(Conversa.objects.exists())
 
-    @patch('atendimento.services.bot.enviar_texto',
+    @patch('atendimento.services.mensageria.enviar_texto',
            return_value={'success': True, 'data': {'id': 'out-1'}})
     def test_primeira_mensagem_nao_cria_card(self, _enviar):
         Servico.objects.create(empresa=self.empresa, nome='Licenciamento')
@@ -117,7 +120,7 @@ class IntegracaoApiTests(TestCase):
         self.assertEqual(resposta.json()['status'], 'ok')
         self.assertEqual(Tarefa.objects.count(), 0)
 
-    @patch('atendimento.services.bot.enviar_texto',
+    @patch('atendimento.services.mensageria.enviar_texto',
            return_value={'success': True, 'data': {'id': 'out-1'}})
     def test_escolha_do_servico_cria_card(self, _enviar):
         Servico.objects.create(empresa=self.empresa, nome='Licenciamento')
@@ -125,7 +128,7 @@ class IntegracaoApiTests(TestCase):
         self._webhook({'id': 'evt-1', 'from': '5511999999999@c.us', 'body': '1'})
         self.assertEqual(Tarefa.objects.count(), 1)
 
-    @patch('atendimento.services.bot.enviar_texto',
+    @patch('atendimento.services.mensageria.enviar_texto',
            return_value={'success': True, 'data': {'id': 'out-1'}})
     def test_webhook_guarda_o_chat_id_do_lid(self, _enviar):
         self._webhook({
@@ -152,3 +155,94 @@ class IntegracaoApiTests(TestCase):
         )
         self.assertEqual(resposta.status_code, 200)
         mock_enviar.assert_called_once()
+
+
+class RecuperacaoDeSessaoWahaTests(TestCase):
+    """Sessão FAILED: tropeço do engine vs. credencial morta.
+
+    O aparelho desvinculado no celular deixa a credencial guardada inválida. O
+    'restart' sobe a sessão com ela, o WhatsApp recusa e ela cai de novo em
+    segundos — e como a tela repete a chamada a cada poucos segundos, o QR nunca
+    aparece. Depois de algumas falhas seguidas o caminho é apagar a credencial.
+    """
+
+    def setUp(self):
+        self.empresa = Empresa.objects.create(nome='Despachante Teste')
+        self.sessao = WahaSessao.objects.create(
+            empresa=self.empresa, nome_sessao=f'empresa_{self.empresa.id}')
+        self.url = reverse('gerar_qr_code_empresa', args=[self.empresa.id])
+        # A rota exige sessão: quem a chama é a barra lateral de quem está logado.
+        usuario = get_user_model().objects.create_user('ana', password='x')
+        usuario.empresas_vinculadas.all().delete()
+        EmpresaUsuario.objects.create(
+            empresa=self.empresa, usuario=usuario, ativo=True)
+        self.client.force_login(usuario)
+
+    def chamar(self, status):
+        """Simula uma passada do polling da tela com a sessão naquele status."""
+        with patch('integracao.views.WahaService.obter_status_sessao',
+                   return_value=status), \
+             patch('integracao.views.WahaService.obter_qr_code', return_value=None), \
+             patch('integracao.views.WahaService.garantir_sessao_ativa') as garantir:
+            self.client.get(self.url)
+        self.sessao.refresh_from_db()
+        # 'WORKING' responde 'conectado' antes de mexer na sessão.
+        if not garantir.call_args:
+            return None
+        return garantir.call_args.kwargs.get('forcar_novo_pareamento')
+
+    def test_primeira_falha_so_reinicia(self):
+        self.assertFalse(self.chamar('FAILED'))
+
+    def test_falhas_seguidas_pedem_novo_pareamento(self):
+        self.chamar('FAILED')
+        self.assertTrue(self.chamar('FAILED'))
+
+    def test_starting_no_meio_nao_zera_o_contador(self):
+        """O ciclo da sessão quebrada é FAILED → STARTING → FAILED.
+
+        Zerar no STARTING faria o laço nunca escalar — era o que travava o QR.
+        """
+        self.chamar('FAILED')
+        self.chamar('STARTING')
+        self.assertTrue(self.chamar('FAILED'))
+
+    def test_chegar_no_qr_zera_o_contador(self):
+        self.chamar('FAILED')
+        self.chamar('FAILED')
+        self.chamar('SCAN_QR_CODE')
+
+        self.assertEqual(self.sessao.tentativas_recuperacao, 0)
+        self.assertFalse(self.chamar('FAILED'))
+
+    def test_conectar_zera_o_contador(self):
+        """Conectar depois de falhar não pode deixar o contador armado."""
+        self.chamar('FAILED')
+        self.chamar('WORKING')
+        self.sessao.refresh_from_db()
+        self.assertEqual(self.sessao.tentativas_recuperacao, 0)
+
+
+class GarantirSessaoAtivaTests(TestCase):
+    """O que é disparado no WAHA em cada situação."""
+
+    def chamadas(self, status, **kwargs):
+        with patch('integracao.services.waha_service.requests.post') as post:
+            WahaService.garantir_sessao_ativa(
+                'empresa_1', 'http://webhook/', status, **kwargs)
+        return [c.args[0] for c in post.call_args_list]
+
+    def test_failed_reinicia(self):
+        self.assertEqual(
+            self.chamadas('FAILED'),
+            ['http://localhost:3001/api/sessions/empresa_1/restart'])
+
+    def test_failed_com_credencial_morta_faz_logout_e_start(self):
+        self.assertEqual(
+            self.chamadas('FAILED', forcar_novo_pareamento=True),
+            ['http://localhost:3001/api/sessions/empresa_1/logout',
+             'http://localhost:3001/api/sessions/empresa_1/start'])
+
+    def test_sessao_subindo_nao_e_tocada(self):
+        for status in ('STARTING', 'SCAN_QR_CODE', 'WORKING'):
+            self.assertEqual(self.chamadas(status), [], status)

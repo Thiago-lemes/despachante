@@ -1,0 +1,61 @@
+{% extends 'documentos/base.html' %}
+{% block titulo %}Minhas conversas{% endblock %}
+{% block conteudo %}
+
+<p class="eyebrow">{{ request.empresa.nome }}</p>
+<h1 class="page-title">Minhas conversas</h1>
+<p class="page-subtitle">
+    Os atendimentos que estão com você. Para ver os da equipe inteira, use o Kanban.
+</p>
+
+{% if aguardando %}
+    <div class="alert-warning mt-6">
+        {{ aguardando }} convers{{ aguardando|pluralize:"a,as" }}
+        esperando a sua resposta.
+    </div>
+{% endif %}
+
+{% if tarefas %}
+    <ul class="mt-6 divide-y divide-slate-100 rounded border border-steel bg-white">
+        {% for tarefa in tarefas %}
+            <li>
+                <a class="flex flex-wrap items-center gap-3 px-4 py-3 hover:bg-slate-50"
+                   href="{% url 'conversa' tarefa.id %}">
+                    <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-kingdom font-bold text-white">
+                        {{ tarefa.contato.nome_exibicao|first|upper }}
+                    </span>
+
+                    <span class="min-w-0 flex-1">
+                        <span class="flex items-center gap-2">
+                            <span class="truncate font-semibold text-ink">{{ tarefa.contato.nome_exibicao }}</span>
+                            {% if tarefa.aguardando_resposta %}
+                                <span class="badge-working shrink-0">aguardando você</span>
+                            {% endif %}
+                        </span>
+                        <span class="block truncate text-sm text-slate-600">
+                            {% if tarefa.ultima_direcao == 'entrada' %}
+                                {{ tarefa.ultima_conteudo|default:"—" }}
+                            {% else %}
+                                <span class="text-slate-400">Você:</span> {{ tarefa.ultima_conteudo|default:"—" }}
+                            {% endif %}
+                        </span>
+                        <span class="block text-xs text-slate-400">
+                            {{ tarefa.servico.caminho|default:"sem serviço definido" }}
+                            · protocolo {{ tarefa.id|stringformat:"s"|slice:":8"|upper }}
+                        </span>
+                    </span>
+
+                    <span class="shrink-0 text-xs text-slate-400">
+                        {{ tarefa.ultima_em|date:"d/m H:i" }}
+                    </span>
+                </a>
+            </li>
+        {% endfor %}
+    </ul>
+{% else %}
+    <div class="empty-state mt-6">
+        <p class="prose-copy">Nenhum atendimento com você no momento.</p>
+        <a class="btn-primary mt-4" href="{% url 'kanban_tarefas' %}">Ver a fila no Kanban</a>
+    </div>
+{% endif %}
+{% endblock %}

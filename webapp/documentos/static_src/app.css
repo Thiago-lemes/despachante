@@ -12,11 +12,21 @@
 
 @layer components {
   .app-shell { @apply min-h-screen lg:grid lg:grid-cols-[248px_minmax(0,1fr)]; }
-  .sidebar { @apply fixed inset-y-0 left-0 z-50 flex w-[248px] -translate-x-full flex-col border-r border-white/10 bg-ink text-white transition-transform duration-200 lg:sticky lg:top-0 lg:h-screen lg:translate-x-0; }
+  /* overflow-hidden: nada dentro da barra pode gerar rolagem horizontal na página. */
+  .sidebar { @apply fixed inset-y-0 left-0 z-50 flex w-[248px] -translate-x-full flex-col overflow-hidden border-r border-white/10 bg-ink text-white transition-transform duration-200 lg:sticky lg:top-0 lg:h-screen lg:translate-x-0; }
   .sidebar.is-open { @apply translate-x-0; }
-  .sidebar-brand { @apply flex min-h-20 items-center gap-3 border-b border-white/10 px-5; }
+  .sidebar-brand { @apply flex min-h-20 shrink-0 items-center gap-3 border-b border-white/10 px-5; }
+  /* Marca: a arte vem em JPG com fundo preto; mix-blend-mode lighten dissolve
+     esse fundo sobre qualquer base escura, e o recorte mostra só o castelo. */
+  .brand-mark { @apply relative flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded bg-ink ring-1 ring-white/15; isolation: isolate; }
+  .brand-mark img { @apply h-full w-full object-cover; transform: scale(1.75); transform-origin: 50% 3%; mix-blend-mode: lighten; }
   .sidebar-logo { @apply h-12 w-12 shrink-0 rounded object-cover ring-1 ring-white/20; }
-  .nav-link { @apply mx-3 flex min-h-11 items-center gap-3 rounded px-3 text-sm font-semibold text-slate-300 transition-colors hover:bg-white/10 hover:text-white; }
+  /* A única área rolável da barra: rolagem vertical apenas, sem encadear no body. */
+  .sidebar-nav { @apply min-h-0 flex-1 space-y-1 overflow-y-auto overflow-x-hidden overscroll-contain px-3 py-5; }
+  .sidebar-footer { @apply shrink-0 border-t border-white/10 p-4; }
+  /* Largura total do container (o recuo lateral vem do padding do nav/rodapé):
+     com margem lateral, itens com w-full estouravam os 248px e criavam scroll. */
+  .nav-link { @apply flex w-full min-h-11 items-center gap-3 rounded px-3 py-2 text-left text-sm font-semibold leading-tight text-slate-300 transition-colors hover:bg-white/10 hover:text-white; }
   .nav-link.is-active { @apply bg-white text-ink shadow-sm; }
   .nav-icon { @apply h-5 w-5 shrink-0; }
   .mobile-bar { @apply sticky top-0 z-30 flex h-16 items-center justify-between border-b border-steel bg-white px-4 lg:hidden; }
@@ -80,13 +90,35 @@
   .process-node.is-error { @apply border-red-400 bg-red-50 text-red-700; }
   .auth-shell { @apply grid min-h-screen bg-ink lg:grid-cols-[minmax(360px,480px)_1fr]; }
   .auth-panel { @apply flex min-h-screen items-center bg-white px-6 py-10 sm:px-12; }
-  .auth-brand { @apply relative hidden min-h-screen items-center justify-center overflow-hidden bg-ink p-12 lg:flex; }
+  /* Fundo escuro com um facho que afunila até a marca: violeta das bandeiras
+     em cima, dourado do brasão no centro, ink puro nas bordas. */
+  .auth-brand {
+    @apply relative hidden min-h-screen items-center justify-center overflow-hidden p-12 lg:flex;
+    isolation: isolate;
+    background:
+      radial-gradient(90% 55% at 50% 42%, rgba(199, 154, 53, .20) 0%, rgba(199, 154, 53, 0) 70%),
+      radial-gradient(120% 70% at 50% -10%, rgba(101, 66, 143, .55) 0%, rgba(101, 66, 143, 0) 65%),
+      linear-gradient(180deg, #1b2233 0%, #101820 52%, #070a0e 100%);
+  }
+  /* Facho em funil (trapézio que estreita para baixo) atrás da marca. */
   .auth-brand::before {
     content: '';
-    @apply absolute inset-0 bg-cover bg-center opacity-20;
-    background-image: url('/static/documentos/fundo.jpg');
+    @apply absolute inset-x-0 top-0 h-full;
+    clip-path: polygon(8% 0, 92% 0, 63% 100%, 37% 100%);
+    background: linear-gradient(180deg, rgba(199, 154, 53, .16) 0%, rgba(101, 66, 143, .12) 45%, rgba(101, 66, 143, 0) 100%);
   }
-  .auth-logo { @apply relative h-auto w-full max-w-sm rounded-md object-contain; }
+  /* Textura sutil por cima do gradiente, sem competir com o logo. */
+  .auth-brand::after {
+    content: '';
+    @apply absolute inset-0 bg-cover bg-center opacity-10;
+    background-image: url('/static/documentos/fundo.jpg');
+    mix-blend-mode: overlay;
+  }
+  .auth-logo {
+    @apply relative z-10 h-auto w-full max-w-md object-contain;
+    mix-blend-mode: lighten;
+    filter: drop-shadow(0 18px 40px rgba(0, 0, 0, .55));
+  }
   .auth-card { @apply mx-auto w-full max-w-sm; }
   .confirm-dialog { @apply w-full max-w-sm rounded-md border border-steel bg-white p-0 shadow-panel; }
   .confirm-dialog::backdrop { @apply bg-ink/60; }
